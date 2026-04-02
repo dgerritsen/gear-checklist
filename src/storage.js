@@ -7,6 +7,7 @@ import {
   EmailAuthProvider,
   onAuthStateChanged,
   signOut as firebaseSignOut,
+  sendPasswordResetEmail,
 } from "firebase/auth";
 import { doc, setDoc, onSnapshot, getDoc } from "firebase/firestore";
 
@@ -51,20 +52,23 @@ function settingsDoc(uid) {
   return doc(db, "users", uid, "data", "settings");
 }
 
-export function subscribeRemote(uid, onChange) {
+export function subscribeRemote(uid, onChange, onError) {
   return onSnapshot(
     checklistDoc(uid),
     (snap) => {
       if (snap.exists()) onChange(snap.data());
       else onChange(null);
     },
-    (err) => console.error("Firestore snapshot error:", err)
+    (err) => {
+      console.error("Firestore snapshot error:", err);
+      if (onError) onError(err);
+    }
   );
 }
 
 export async function saveRemote(uid, data) {
   try {
-    await setDoc(checklistDoc(uid), { ...data, updatedAt: Date.now() });
+    await setDoc(checklistDoc(uid), data);
   } catch (e) {
     console.error("Firestore save failed:", e);
     throw e;
@@ -123,6 +127,10 @@ export async function registerEmail(email, password) {
 export async function linkEmail(email, password) {
   const credential = EmailAuthProvider.credential(email, password);
   await linkWithCredential(auth.currentUser, credential);
+}
+
+export async function resetPassword(email) {
+  await sendPasswordResetEmail(auth, email);
 }
 
 export async function signOut() {

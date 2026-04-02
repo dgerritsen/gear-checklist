@@ -1,9 +1,26 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   loadLocal, saveLocal, subscribeRemote, saveRemote,
-  subscribeAuth, signInAnon, signInEmail, registerEmail, linkEmail, signOut,
+  subscribeAuth, signInAnon, signInEmail, registerEmail, linkEmail, signOut, resetPassword,
   loadLocalApiKey, saveLocalApiKey, loadSettings, saveSettings,
 } from "./storage";
+
+const AUTH_ERRORS = {
+  "auth/wrong-password": "Onjuist wachtwoord",
+  "auth/invalid-credential": "Onjuiste inloggegevens",
+  "auth/user-not-found": "Geen account gevonden met dit e-mailadres",
+  "auth/email-already-in-use": "Dit e-mailadres is al in gebruik",
+  "auth/weak-password": "Wachtwoord moet minimaal 6 tekens bevatten",
+  "auth/invalid-email": "Ongeldig e-mailadres",
+  "auth/too-many-requests": "Te veel pogingen — probeer later opnieuw",
+  "auth/network-request-failed": "Netwerkfout — controleer je verbinding",
+  "auth/credential-already-in-use": "Deze inloggegevens zijn al gekoppeld aan een ander account",
+};
+
+function humanizeAuthError(e) {
+  const code = e?.code || "";
+  return AUTH_ERRORS[code] || e?.message || "Er ging iets mis";
+}
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
@@ -442,15 +459,27 @@ const BudgetField = ({ value, onChange, placeholder = "Budget...", compact = fal
 };
 
 // ═══════════════════════════════════════════════════════════════
-// ─── Sync Status Dot ──────────────────────────────────────────
-const SyncDot = ({ status }) => {
+// ─── Sync Status Indicator ────────────────────────────────────
+const SyncIndicator = ({ status, compact = false }) => {
   const colors = { local: "#6b7280", syncing: "#f59e0b", synced: "#4ade80", offline: "#6b7280", error: "#ef4444" };
   const labels = { local: "Lokaal", syncing: "Synchroniseren...", synced: "Gesynchroniseerd", offline: "Offline", error: "Sync fout" };
+  const icons = { local: "more", syncing: "refresh", synced: "check", offline: "x", error: "x" };
+  if (compact) {
+    return (
+      <span title={labels[status] || "Lokaal"} className={status === "syncing" ? "sync-dot-pulse" : ""} style={{
+        display: "inline-block", width: 8, height: 8, borderRadius: "50%",
+        background: colors[status] || colors.local, flexShrink: 0,
+      }} />
+    );
+  }
   return (
-    <span title={labels[status] || "Lokaal"} style={{
-      display: "inline-block", width: 8, height: 8, borderRadius: "50%",
-      background: colors[status] || colors.local, flexShrink: 0,
-    }} />
+    <span title={labels[status] || "Lokaal"} className={status === "syncing" ? "sync-dot-pulse" : ""} style={{
+      display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11,
+      color: colors[status] || colors.local, flexShrink: 0, fontWeight: 500,
+    }}>
+      <Icon name={icons[status] || "more"} size={12} />
+      {labels[status] || "Lokaal"}
+    </span>
   );
 };
 
@@ -460,15 +489,28 @@ const AccountPanel = ({ user, syncStatus, onSignIn, onRegister, onLink, onSignOu
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
+  const [info, setInfo] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const submit = async (action) => {
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setInfo(null);
     try {
       await action(email, password);
       setMode(null); setEmail(""); setPassword("");
     } catch (e) {
-      setError(e.message || "Er ging iets mis");
+      setError(humanizeAuthError(e));
+    }
+    setBusy(false);
+  };
+
+  const handleResetPassword = async () => {
+    if (!email.trim()) { setError("Vul eerst je e-mailadres in"); return; }
+    setBusy(true); setError(null); setInfo(null);
+    try {
+      await resetPassword(email);
+      setInfo("Herstel-e-mail verstuurd — check je inbox");
+    } catch (e) {
+      setError(humanizeAuthError(e));
     }
     setBusy(false);
   };
@@ -476,55 +518,58 @@ const AccountPanel = ({ user, syncStatus, onSignIn, onRegister, onLink, onSignOu
   if (mode) {
     const action = mode === "login" ? onSignIn : mode === "register" ? onRegister : onLink;
     const label = mode === "login" ? "Inloggen" : mode === "register" ? "Registreren" : "Account koppelen";
+    const subtitle = mode === "link"
+      ? "Koppel een e-mailadres om je gegevens op meerdere apparaten te gebruiken"
+      : mode === "register"
+      ? "Maak een account aan om je gegevens veilig in de cloud op te slaan"
+      : null;
     return (
-      <div style={{ padding: "8px 0", display: "flex", flexDirection: "column", gap: 6 }}>
-        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--accent)" }}>{label}</span>
-        <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="E-mail"
-          style={{ background: "var(--bg-input)", border: "1px solid var(--border)", borderRadius: 6, padding: "8px 10px", color: "var(--text)", outline: "none", fontSize: 13, fontFamily: "inherit" }} />
-        <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Wachtwoord"
-          onKeyDown={e => e.key === "Enter" && submit(action)}
-          style={{ background: "var(--bg-input)", border: "1px solid var(--border)", borderRadius: 6, padding: "8px 10px", color: "var(--text)", outline: "none", fontSize: 13, fontFamily: "inherit" }} />
-        {error && <div style={{ fontSize: 11, color: "var(--danger)" }}>{error}</div>}
-        <div style={{ display: "flex", gap: 6 }}>
-          <button onClick={() => submit(action)} disabled={busy}
-            style={{ flex: 1, background: "var(--accent)", border: "none", borderRadius: 6, color: "#fff", padding: "8px 0", fontSize: 13, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, opacity: busy ? 0.6 : 1 }}>
-            {busy ? "..." : label}
-          </button>
-          <button onClick={() => { setMode(null); setError(null); }}
-            style={{ background: "var(--bg-input)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", padding: "8px 12px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
-            Annuleer
-          </button>
+      <div className="account-panel">
+        <div className="account-form">
+          <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>{label}</span>
+          {subtitle && <span style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.4, marginBottom: 2 }}>{subtitle}</span>}
+          <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="E-mailadres"
+            className="account-input" autoComplete="email" />
+          <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Wachtwoord (min. 6 tekens)"
+            onKeyDown={e => e.key === "Enter" && submit(action)}
+            className="account-input" autoComplete={mode === "login" ? "current-password" : "new-password"} />
+          {error && <div style={{ fontSize: 11, color: "var(--danger)", padding: "2px 0" }}>{error}</div>}
+          {info && <div style={{ fontSize: 11, color: "var(--success)", padding: "2px 0" }}>{info}</div>}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => submit(action)} disabled={busy} className="account-btn account-btn-primary" style={{ flex: 1 }}>
+              {busy ? <span className="ai-spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> : label}
+            </button>
+            <button onClick={() => { setMode(null); setError(null); setInfo(null); }} className="account-btn account-btn-secondary" style={{ padding: "10px 16px" }}>
+              Annuleer
+            </button>
+          </div>
+          {mode === "login" && (
+            <button onClick={handleResetPassword} disabled={busy}
+              style={{ background: "none", border: "none", color: "var(--accent)", fontSize: 11, cursor: "pointer", fontFamily: "inherit", padding: "2px 0", textAlign: "left", opacity: 0.8 }}>
+              Wachtwoord vergeten?
+            </button>
+          )}
         </div>
       </div>
     );
   }
 
-  if (user && !user.isAnonymous) {
-    return (
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", flexWrap: "wrap" }}>
-        <SyncDot status={syncStatus} />
-        <span style={{ fontSize: 12, color: "var(--text-muted)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{user.email}</span>
-        <button onClick={onSignOut} className="action-btn" style={{ fontSize: 11, padding: "6px 10px" }}>Uitloggen</button>
-      </div>
-    );
-  }
-
-  if (user && user.isAnonymous) {
-    return (
-      <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 0", flexWrap: "wrap" }}>
-        <SyncDot status={syncStatus} />
-        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Anoniem</span>
-        <button onClick={() => setMode("link")} className="action-btn" style={{ fontSize: 11, padding: "6px 10px" }}>Account koppelen</button>
-      </div>
-    );
-  }
-
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 0", flexWrap: "wrap" }}>
-      <SyncDot status={syncStatus} />
-      <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Niet ingelogd</span>
-      <button onClick={() => setMode("login")} className="action-btn" style={{ fontSize: 11, padding: "6px 10px" }}>Inloggen</button>
-      <button onClick={() => setMode("register")} className="action-btn" style={{ fontSize: 11, padding: "6px 10px" }}>Registreren</button>
+    <div className="account-panel">
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <SyncIndicator status={syncStatus} />
+        <div style={{ flex: 1, minWidth: 0 }} />
+        {user && !user.isAnonymous ? (<>
+          <span style={{ fontSize: 12, color: "var(--text)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>{user.email}</span>
+          <button onClick={onSignOut} className="action-btn" style={{ fontSize: 11, padding: "6px 10px" }}>Uitloggen</button>
+        </>) : user && user.isAnonymous ? (<>
+          <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Niet gekoppeld</span>
+          <button onClick={() => setMode("link")} className="action-btn" style={{ fontSize: 11, padding: "6px 10px", borderColor: "var(--accent)", color: "var(--accent)" }}>Account koppelen</button>
+        </>) : (<>
+          <button onClick={() => setMode("login")} className="action-btn" style={{ fontSize: 11, padding: "6px 10px" }}>Inloggen</button>
+          <button onClick={() => setMode("register")} className="action-btn" style={{ fontSize: 11, padding: "6px 10px", borderColor: "var(--accent)", color: "var(--accent)" }}>Registreren</button>
+        </>)}
+      </div>
     </div>
   );
 };
@@ -542,12 +587,15 @@ export default function GearChecklist() {
   const [conflictData, setConflictData] = useState(null);
   const saveTimeout = useRef(null);
   const userRef = useRef(null);
+  const dataRef = useRef(null);
   const localUpdatedAt = useRef(0);
   const unsubRemote = useRef(null);
-  const skipNextRemote = useRef(false);
+  const lastSavedAt = useRef(0);
+  const signingIn = useRef(false);
 
-  // Keep userRef in sync
+  // Keep refs in sync
   useEffect(() => { userRef.current = user; }, [user]);
+  useEffect(() => { dataRef.current = data; }, [data]);
 
   // ─── Init: load local, then set up auth + remote sync ──────
   useEffect(() => {
@@ -561,103 +609,143 @@ export default function GearChecklist() {
       setLoading(false);
     });
 
-    const unsubAuth = subscribeAuth((u) => {
-      if (cancelled) return;
-      setUser(u);
+    let isFirstAuthCallback = true;
 
+    // Track online/offline for sync status
+    const goOffline = () => { if (!cancelled) setSyncStatus(s => s === "local" ? s : "offline"); };
+    const goOnline = () => { if (!cancelled) setSyncStatus(s => s === "offline" ? "syncing" : s); };
+    window.addEventListener("offline", goOffline);
+    window.addEventListener("online", goOnline);
+
+    function setupRemoteSync(u) {
       // Clean up previous remote subscription
       if (unsubRemote.current) { unsubRemote.current(); unsubRemote.current = null; }
 
-      if (u) {
-        setSyncStatus("syncing");
+      setSyncStatus(navigator.onLine ? "syncing" : "offline");
 
-        // Sync API key for non-anonymous users
-        if (!u.isAnonymous) {
-          loadSettings(u.uid).then(settings => {
-            if (cancelled) return;
-            if (settings?.apiKey) {
-              const localKey = loadLocalApiKey();
-              if (!localKey) saveLocalApiKey(settings.apiKey);
-            }
-          });
-        }
-
-        let firstSnapshot = true;
-        unsubRemote.current = subscribeRemote(u.uid, (remoteData) => {
+      // Sync API key for non-anonymous users
+      if (!u.isAnonymous) {
+        loadSettings(u.uid).then(settings => {
           if (cancelled) return;
-
-          if (skipNextRemote.current) { skipNextRemote.current = false; setSyncStatus("synced"); return; }
-
-          if (!remoteData) {
-            // No remote data — push local data up on first connect
-            if (firstSnapshot) {
-              firstSnapshot = false;
-              loadLocal().then(ld => {
-                if (ld && ld.categories && ld.categories.length > 0) {
-                  saveRemote(u.uid, ld).then(() => setSyncStatus("synced")).catch(() => setSyncStatus("error"));
-                } else {
-                  setSyncStatus("synced");
-                }
-              });
-            }
-            return;
+          if (settings?.apiKey) {
+            const localKey = loadLocalApiKey();
+            if (!localKey) saveLocalApiKey(settings.apiKey);
           }
+        });
+      }
 
-          const remoteTime = remoteData.updatedAt || 0;
+      let firstSnapshot = true;
+      unsubRemote.current = subscribeRemote(u.uid, (remoteData) => {
+        if (cancelled) return;
 
+        const remoteTime = remoteData?.updatedAt || 0;
+
+        // Skip echoes of our own writes
+        if (remoteTime && remoteTime === lastSavedAt.current) { setSyncStatus("synced"); return; }
+
+        if (!remoteData) {
+          // No remote data — push local data up on first connect
           if (firstSnapshot) {
             firstSnapshot = false;
-            // Check for conflict: both local and remote have data
             loadLocal().then(ld => {
               if (cancelled) return;
-              const hasLocal = ld && ld.categories && ld.categories.length > 0;
-              const localTime = ld?.updatedAt || 0;
-
-              if (hasLocal && localTime > 0 && remoteTime > 0 && localTime !== remoteTime) {
-                // Conflict — let user choose
-                setConflictData({ local: ld, remote: remoteData });
-                setSyncStatus("synced");
-              } else if (remoteTime >= localTime) {
-                // Remote is newer or same — use remote
-                const { updatedAt, ...clean } = remoteData;
-                setData({ ...clean, updatedAt });
-                saveLocal({ ...clean, updatedAt });
-                localUpdatedAt.current = remoteTime;
-                setSyncStatus("synced");
+              if (ld && ld.categories && ld.categories.length > 0) {
+                lastSavedAt.current = ld.updatedAt || 0;
+                saveRemote(u.uid, ld).then(() => setSyncStatus("synced")).catch(() => setSyncStatus("error"));
               } else {
                 setSyncStatus("synced");
               }
             });
-            return;
           }
+          return;
+        }
 
-          // Subsequent snapshots: remote wins if newer
-          if (remoteTime > localUpdatedAt.current) {
-            const { updatedAt, ...clean } = remoteData;
-            setData({ ...clean, updatedAt });
-            saveLocal({ ...clean, updatedAt });
-            localUpdatedAt.current = remoteTime;
-          }
-          setSyncStatus("synced");
-        });
+        if (firstSnapshot) {
+          firstSnapshot = false;
+          // Check for conflict: both local and remote have data
+          loadLocal().then(ld => {
+            if (cancelled) return;
+            const hasLocal = ld && ld.categories && ld.categories.length > 0;
+            const localTime = ld?.updatedAt || 0;
+
+            if (hasLocal && localTime > 0 && remoteTime > 0 && localTime !== remoteTime) {
+              // Conflict — let user choose
+              setConflictData({ local: ld, remote: remoteData });
+              setSyncStatus("synced");
+            } else if (remoteTime >= localTime) {
+              // Remote is newer or same — use remote
+              setData(remoteData);
+              saveLocal(remoteData);
+              localUpdatedAt.current = remoteTime;
+              setSyncStatus("synced");
+            } else {
+              setSyncStatus("synced");
+            }
+          });
+          return;
+        }
+
+        // Subsequent snapshots: remote wins if newer
+        if (remoteTime > localUpdatedAt.current) {
+          setData(remoteData);
+          saveLocal(remoteData);
+          localUpdatedAt.current = remoteTime;
+        }
+        setSyncStatus("synced");
+      }, () => { if (!cancelled) setSyncStatus("error"); });
+    }
+
+    // Flush pending save on tab close
+    const flushOnUnload = () => {
+      if (saveTimeout.current) {
+        clearTimeout(saveTimeout.current);
+        saveTimeout.current = null;
+        // Synchronous localStorage write — saveRemote can't run here
+        try { localStorage.setItem("gear-checklist-data", JSON.stringify(dataRef.current)); } catch {}
+      }
+    };
+    window.addEventListener("beforeunload", flushOnUnload);
+
+    const unsubAuth = subscribeAuth((u) => {
+      if (cancelled) return;
+
+      if (!u && signingIn.current) {
+        // Ignore intermediate null during sign-in/sign-out transition
+        return;
+      }
+
+      setUser(u);
+
+      if (u) {
+        signingIn.current = false;
+        setupRemoteSync(u);
+      } else if (isFirstAuthCallback) {
+        // No existing session — sign in anonymously
+        signInAnon().catch(() => setSyncStatus("local"));
       } else {
+        // User explicitly signed out
+        if (unsubRemote.current) { unsubRemote.current(); unsubRemote.current = null; }
         setSyncStatus("local");
       }
-    });
 
-    // Try anonymous sign-in
-    signInAnon().catch(() => setSyncStatus("local"));
+      isFirstAuthCallback = false;
+    });
 
     return () => {
       cancelled = true;
       unsubAuth();
       if (unsubRemote.current) unsubRemote.current();
+      if (saveTimeout.current) clearTimeout(saveTimeout.current);
+      window.removeEventListener("offline", goOffline);
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("beforeunload", flushOnUnload);
     };
   }, []);
 
   const persist = useCallback((nd) => {
     const stamped = { ...nd, updatedAt: Date.now() };
     localUpdatedAt.current = stamped.updatedAt;
+    lastSavedAt.current = stamped.updatedAt;
     setData(stamped);
     if (saveTimeout.current) clearTimeout(saveTimeout.current);
     saveTimeout.current = setTimeout(() => {
@@ -665,8 +753,7 @@ export default function GearChecklist() {
       const u = userRef.current;
       if (u) {
         setSyncStatus("syncing");
-        skipNextRemote.current = true;
-        saveRemote(u.uid, stamped).then(() => setSyncStatus("synced")).catch(() => { setSyncStatus("error"); skipNextRemote.current = false; });
+        saveRemote(u.uid, stamped).then(() => setSyncStatus("synced")).catch(() => setSyncStatus("error"));
       }
     }, 300);
   }, []);
@@ -674,29 +761,43 @@ export default function GearChecklist() {
   const resolveConflict = (choice) => {
     const chosen = choice === "local" ? conflictData.local : conflictData.remote;
     const stamped = { ...chosen, updatedAt: Date.now() };
+    localUpdatedAt.current = stamped.updatedAt;
+    lastSavedAt.current = stamped.updatedAt;
     setData(stamped);
     saveLocal(stamped);
-    localUpdatedAt.current = stamped.updatedAt;
     if (userRef.current) {
-      skipNextRemote.current = true;
       saveRemote(userRef.current.uid, stamped).catch(() => {});
     }
     setConflictData(null);
   };
 
   const handleSignIn = async (email, password) => {
+    signingIn.current = true;
     if (unsubRemote.current) { unsubRemote.current(); unsubRemote.current = null; }
-    await signInEmail(email, password);
+    try {
+      await signInEmail(email, password);
+    } catch (e) {
+      signingIn.current = false;
+      throw e;
+    }
   };
 
   const handleRegister = async (email, password) => {
+    signingIn.current = true;
     if (unsubRemote.current) { unsubRemote.current(); unsubRemote.current = null; }
-    await registerEmail(email, password);
+    try {
+      await registerEmail(email, password);
+    } catch (e) {
+      signingIn.current = false;
+      throw e;
+    }
   };
 
   const handleLink = async (email, password) => {
     await linkEmail(email, password);
-    // Sync API key after linking
+    // onAuthStateChanged may not fire for linkWithCredential — update user manually
+    setUser({ uid: userRef.current.uid, isAnonymous: false, email });
+    // Sync API key and existing data under the now-linked account
     const apiKey = loadLocalApiKey();
     if (apiKey && userRef.current) {
       saveSettings(userRef.current.uid, { apiKey });
@@ -704,8 +805,11 @@ export default function GearChecklist() {
   };
 
   const handleSignOut = async () => {
+    signingIn.current = true; // suppress intermediate null
     if (unsubRemote.current) { unsubRemote.current(); unsubRemote.current = null; }
     await signOut();
+    // Re-sign-in anonymously; onAuthStateChanged will fire with the new anon user
+    signInAnon().catch(() => { signingIn.current = false; setSyncStatus("local"); });
   };
 
   // ─── CRUD ──────────────────────────────────────────────────
@@ -1132,6 +1236,22 @@ export default function GearChecklist() {
         @keyframes spin{to{transform:rotate(360deg)}}
         .ai-spinner{display:inline-block;width:13px;height:13px;border:2px solid rgba(59,130,246,0.3);border-top-color:var(--accent);border-radius:50%;animation:spin 0.6s linear infinite;flex-shrink:0}
 
+        /* ─ Sync ─ */
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+        .sync-dot-pulse{animation:pulse 1.5s ease-in-out infinite}
+        .account-panel{padding:10px 12px;background:var(--bg-nested);border:1px solid var(--border-light);border-radius:10px;margin-top:8px}
+        .account-form{display:flex;flex-direction:column;gap:8px}
+        .account-input{background:var(--bg-input);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);outline:none;font-size:13px;font-family:inherit;transition:border-color 0.15s}
+        .account-input:focus{border-color:var(--accent)}
+        .account-btn{border:none;border-radius:8px;padding:10px 0;font-size:13px;cursor:pointer;font-family:inherit;font-weight:600;transition:opacity 0.15s}
+        .account-btn:disabled{opacity:0.5;cursor:wait}
+        .account-btn-primary{background:var(--accent);color:#fff}
+        .account-btn-secondary{background:var(--bg-input);border:1px solid var(--border);color:var(--text)}
+        .conflict-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px;animation:fadeIn 0.2s ease}
+        .conflict-card{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:24px;max-width:380px;width:100%;animation:slideUp 0.25s ease}
+        @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+        @keyframes slideUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+
         /* ─── DESKTOP ─── */
         @media(min-width:640px){
           .app-root{padding:24px 20px 60px}
@@ -1172,17 +1292,32 @@ export default function GearChecklist() {
 
       {/* Conflict Dialog */}
       {conflictData && (
-        <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16 }}>
-          <div style={{ background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:14,padding:20,maxWidth:360,width:"100%" }}>
-            <h3 style={{ fontSize:16,fontWeight:700,marginBottom:10 }}>Gegevens gevonden</h3>
-            <p style={{ fontSize:13,color:"var(--text-muted)",marginBottom:16,lineHeight:1.5 }}>
-              Er zijn gegevens op dit apparaat en in de cloud. Welke wil je gebruiken?
+        <div className="conflict-overlay">
+          <div className="conflict-card">
+            <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:12 }}>
+              <Icon name="refresh" size={20} className="cat-icon" />
+              <h3 style={{ fontSize:16,fontWeight:700 }}>Sync conflict</h3>
+            </div>
+            <p style={{ fontSize:13,color:"var(--text-muted)",marginBottom:8,lineHeight:1.6 }}>
+              Er zijn verschillende gegevens gevonden op dit apparaat en in de cloud.
             </p>
+            <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16 }}>
+              <div style={{ background:"var(--bg-nested)",borderRadius:8,padding:10,border:"1px solid var(--border-light)" }}>
+                <div style={{ fontSize:10,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:0.5,marginBottom:4,fontWeight:600 }}>Dit apparaat</div>
+                <div style={{ fontSize:13,fontWeight:600 }}>{conflictData.local.categories?.length || 0} categorieën</div>
+                <div style={{ fontSize:11,color:"var(--text-muted)" }}>{Object.keys(conflictData.local.items || {}).length} voorwerpen</div>
+              </div>
+              <div style={{ background:"var(--bg-nested)",borderRadius:8,padding:10,border:"1px solid var(--border-light)" }}>
+                <div style={{ fontSize:10,color:"var(--text-muted)",textTransform:"uppercase",letterSpacing:0.5,marginBottom:4,fontWeight:600 }}>Cloud</div>
+                <div style={{ fontSize:13,fontWeight:600 }}>{conflictData.remote.categories?.length || 0} categorieën</div>
+                <div style={{ fontSize:11,color:"var(--text-muted)" }}>{Object.keys(conflictData.remote.items || {}).length} voorwerpen</div>
+              </div>
+            </div>
             <div style={{ display:"flex",gap:8 }}>
-              <button onClick={() => resolveConflict("local")} style={{ flex:1,background:"var(--bg-input)",border:"1px solid var(--border)",borderRadius:8,color:"var(--text)",padding:"10px 0",fontSize:13,cursor:"pointer",fontFamily:"inherit",fontWeight:600 }}>
+              <button onClick={() => resolveConflict("local")} className="account-btn account-btn-secondary" style={{ flex:1 }}>
                 Lokaal behouden
               </button>
-              <button onClick={() => resolveConflict("remote")} style={{ flex:1,background:"var(--accent)",border:"none",borderRadius:8,color:"#fff",padding:"10px 0",fontSize:13,cursor:"pointer",fontFamily:"inherit",fontWeight:600 }}>
+              <button onClick={() => resolveConflict("remote")} className="account-btn account-btn-primary" style={{ flex:1 }}>
                 Cloud gebruiken
               </button>
             </div>
@@ -1195,7 +1330,7 @@ export default function GearChecklist() {
         <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between" }}>
           <h1 style={{ fontSize:21,fontWeight:800,letterSpacing:-0.5,display:"flex",alignItems:"center",gap:8 }}>
             <span style={{ color:"var(--accent)" }}>⬡</span> Gear Checklist
-            <SyncDot status={syncStatus} />
+            <SyncIndicator status={syncStatus} compact />
           </h1>
           <button onClick={() => setShowActions(!showActions)} style={{ background:"none",border:"none",color:"var(--text-muted)",cursor:"pointer",padding:8,minWidth:40,minHeight:40,display:"flex",alignItems:"center",justifyContent:"center" }}>
             <Icon name="more" size={20} />
