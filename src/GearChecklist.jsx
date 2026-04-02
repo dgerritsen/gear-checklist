@@ -58,13 +58,13 @@ const Icon = ({ name, size = 18, className = "" }) => {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}
-      style={{ flexShrink: 0 }}>{paths[name]}</svg>
+      style={{ flexShrink: 0 }} aria-hidden="true">{paths[name]}</svg>
   );
 };
 
 // ─── Checkbox (44px touch target) ──────────────────────────────
 const Checkbox = ({ checked, onChange, size = 20, color = "var(--accent)" }) => (
-  <button onClick={(e) => { e.stopPropagation(); onChange(); }} style={{
+  <button role="checkbox" aria-checked={checked} aria-label={checked ? "Uitvinken" : "Aanvinken"} onClick={(e) => { e.stopPropagation(); onChange(); }} style={{
     display: "flex", alignItems: "center", justifyContent: "center",
     padding: 0, background: "none", border: "none", cursor: "pointer",
     minWidth: 40, minHeight: 40, flexShrink: 0,
@@ -113,7 +113,7 @@ const InlineEdit = ({ value, onSave, placeholder = "", style: s = {} }) => {
   );
 
   return (
-    <span onClick={handleClick} style={{ ...s, cursor: "default", wordBreak: "break-word" }} title="Dubbeltik om te bewerken">
+    <span onClick={handleClick} className="inline-editable" style={{ ...s, cursor: "default", wordBreak: "break-word", borderBottom: "1px dashed transparent", transition: "border-color 0.15s" }} title="Dubbeltik om te bewerken">
       {value}
     </span>
   );
@@ -121,26 +121,46 @@ const InlineEdit = ({ value, onSave, placeholder = "", style: s = {} }) => {
 
 // ─── Add Input ─────────────────────────────────────────────────
 const AddInput = ({ onAdd, placeholder, compact = false }) => {
+  const [open, setOpen] = useState(false);
   const [value, setValue] = useState("");
-  const submit = () => { if (value.trim()) { onAdd(value.trim()); setValue(""); } };
+  const inputRef = useRef(null);
+  const submit = () => { if (value.trim()) { onAdd(value.trim()); setValue(""); setOpen(false); } };
+
+  useEffect(() => { if (open && inputRef.current) inputRef.current.focus(); }, [open]);
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} className="add-trigger" aria-label={placeholder || "Toevoegen"}>
+        <Icon name="plus" size={compact ? 14 : 16} />
+        <span>{placeholder || "Toevoegen..."}</span>
+      </button>
+    );
+  }
+
   return (
-    <div className="add-input">
-      <input value={value} onChange={e => setValue(e.target.value)}
-        onKeyDown={e => e.key === "Enter" && submit()}
+    <div className="add-popover" onClick={e => e.stopPropagation()}>
+      <input ref={inputRef} value={value} onChange={e => setValue(e.target.value)}
+        onKeyDown={e => { if (e.key === "Enter") submit(); if (e.key === "Escape") { setValue(""); setOpen(false); } }}
         placeholder={placeholder}
         style={{
           flex: 1, background: "var(--bg-input)", border: "1px solid var(--border)", borderRadius: 8,
           padding: compact ? "8px 10px" : "10px 12px", color: "var(--text)", outline: "none",
           fontSize: compact ? 13 : 14, fontFamily: "inherit", minWidth: 0,
         }} />
-      <button onClick={submit} className="add-btn" style={{
+      <button onClick={submit} aria-label="Toevoegen" className="add-btn" style={{
         background: "var(--accent)", border: "none", borderRadius: 8, color: "#fff",
-        padding: compact ? "8px 12px" : "10px 14px", cursor: "pointer", display: "flex",
+        padding: compact ? "8px 10px" : "10px 12px", cursor: "pointer", display: "flex",
         alignItems: "center", gap: 4, fontSize: compact ? 13 : 14, fontFamily: "inherit", fontWeight: 600,
         whiteSpace: "nowrap", flexShrink: 0,
       }}>
-        <Icon name="plus" size={16} />
-        <span className="add-label">Toevoegen</span>
+        <Icon name="plus" size={14} />
+      </button>
+      <button onClick={() => { setValue(""); setOpen(false); }} aria-label="Annuleren" style={{
+        background: "none", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text-muted)",
+        padding: compact ? "8px 10px" : "10px 12px", cursor: "pointer", display: "flex",
+        alignItems: "center", fontSize: compact ? 13 : 14, fontFamily: "inherit", flexShrink: 0,
+      }}>
+        <Icon name="x" size={14} />
       </button>
     </div>
   );
@@ -211,7 +231,7 @@ const NoteEditor = ({ note, onSave }) => {
         background: "none", border: "none", color: note ? "var(--accent)" : "var(--text-muted)",
         cursor: "pointer", padding: 6, display: "flex", alignItems: "center",
         minWidth: 34, minHeight: 34, justifyContent: "center",
-      }} title={note || "Notitie toevoegen"}>
+      }} title={note || "Notitie toevoegen"} aria-label="Notitie">
         <Icon name="note" size={16} />
       </button>
       {open && (
@@ -243,112 +263,6 @@ const NoteEditor = ({ note, onSave }) => {
   );
 };
 
-// ─── AI Description ────────────────────────────────────────────
-const AiDescription = ({ description, onSave, context }) => {
-  const [loading, setLoading] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-  const [error, setError] = useState(null);
-
-  const generate = async () => {
-    setLoading(true); setError(null);
-    try {
-      const instruction = `Je bent een behulpzame assistent die beknopte, informatieve beschrijvingen geeft voor uitrustings- en gearitems. Schrijf in het Nederlands. Wees praktisch en direct. Focus op:
-- Wat het is en waarvoor het dient
-- Waar je op moet letten bij aankoop (materiaal, gewicht, duurzaamheid, prijs/kwaliteit)
-- Tips uit ervaring van kampeerders/tourers
-
-${context.type === "option" ? "Dit is een specifiek product/merk. Beschrijf de eigenschappen, voor- en nadelen, en voor wie het geschikt is." : "Dit is een generiek voorwerp. Beschrijf het type product en de belangrijkste keuzes."}
-
-Houd het op maximaal 3-4 zinnen. Geen opsommingstekens, gewoon lopende tekst.`;
-
-      const detail = context.type === "option"
-        ? `Categorie: ${context.category}\nVoorwerp: ${context.item}\nOptie/Product: ${context.name}`
-        : `Categorie: ${context.category}\nVoorwerp: ${context.name}`;
-
-      const apiKey = localStorage.getItem("gear-checklist-api-key");
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(apiKey ? { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" } : {}),
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          messages: [{ role: "user", content: `${instruction}\n\n---\n\n${detail}` }],
-        }),
-      });
-
-      if (!response.ok) {
-        const errBody = await response.text();
-        console.error("API error:", response.status, errBody);
-        setError(`API fout (${response.status})`);
-        setLoading(false);
-        return;
-      }
-
-      const result = await response.json();
-      const text = (result.content || [])
-        .filter(b => b.type === "text")
-        .map(b => b.text)
-        .join("\n")
-        .trim();
-
-      if (text) { onSave(text); setExpanded(true); }
-      else { setError("Geen beschrijving gegenereerd"); console.error("Empty response:", result); }
-    } catch (e) {
-      setError("Netwerkfout — probeer opnieuw");
-      console.error("Fetch error:", e);
-    }
-    setLoading(false);
-  };
-
-  if (description && !expanded) {
-    return (
-      <div className="ai-desc-bar" onClick={(e) => { e.stopPropagation(); setExpanded(true); }}>
-        <Icon name="sparkle" size={12} className="ai-icon" />
-        <span className="ai-desc-preview">{description.slice(0, 60)}...</span>
-      </div>
-    );
-  }
-
-  if (description && expanded) {
-    return (
-      <div className="ai-desc-full" onClick={e => e.stopPropagation()}>
-        <div className="ai-desc-header">
-          <Icon name="sparkle" size={13} className="ai-icon" />
-          <span style={{ fontSize: 11, fontWeight: 600, color: "var(--accent)", textTransform: "uppercase", letterSpacing: 0.5 }}>AI Beschrijving</span>
-          <div style={{ flex: 1 }} />
-          <button onClick={generate} disabled={loading} className="ai-action-btn" title="Opnieuw genereren">
-            <Icon name="refresh" size={12} />
-          </button>
-          <button onClick={() => { onSave(null); setExpanded(false); }} className="ai-action-btn" title="Verwijderen">
-            <Icon name="trash" size={12} />
-          </button>
-          <button onClick={() => setExpanded(false)} className="ai-action-btn" title="Inklappen">
-            <Icon name="chevronDown" size={12} />
-          </button>
-        </div>
-        <p className="ai-desc-text">{description}</p>
-        {loading && <div className="ai-loading">Nieuwe beschrijving genereren...</div>}
-      </div>
-    );
-  }
-
-  // No description yet
-  return (
-    <div onClick={e => e.stopPropagation()}>
-      <button onClick={generate} disabled={loading} className="ai-gen-btn">
-        {loading ? (
-          <><span className="ai-spinner" /> Beschrijving genereren...</>
-        ) : (
-          <><Icon name="sparkle" size={13} className="ai-icon" /> AI Beschrijving</>
-        )}
-      </button>
-      {error && <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 4 }}>{error}</div>}
-    </div>
-  );
-};
 
 // ─── Delete Button ─────────────────────────────────────────────
 const DeleteBtn = ({ onDelete, size = 14 }) => {
@@ -362,7 +276,7 @@ const DeleteBtn = ({ onDelete, size = 14 }) => {
     </div>
   );
   return (
-    <button onClick={(e) => { e.stopPropagation(); setConfirm(true); }} style={{
+    <button aria-label="Verwijderen" onClick={(e) => { e.stopPropagation(); setConfirm(true); }} style={{
       background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer",
       padding: 6, opacity: 0.4, minWidth: 34, minHeight: 34, display: "flex",
       alignItems: "center", justifyContent: "center", flexShrink: 0,
@@ -467,9 +381,11 @@ const SyncIndicator = ({ status, compact = false }) => {
   if (compact) {
     return (
       <span title={labels[status] || "Lokaal"} className={status === "syncing" ? "sync-dot-pulse" : ""} style={{
-        display: "inline-block", width: 8, height: 8, borderRadius: "50%",
-        background: colors[status] || colors.local, flexShrink: 0,
-      }} />
+        display: "inline-flex", alignItems: "center", width: 8, height: 8, borderRadius: "50%",
+        background: colors[status] || colors.local, flexShrink: 0, position: "relative",
+      }}>
+        <span className="sr-only">{labels[status] || "Lokaal"}</span>
+      </span>
     );
   }
   return (
@@ -537,7 +453,7 @@ const AccountPanel = ({ user, syncStatus, onSignIn, onRegister, onLink, onSignOu
           {info && <div style={{ fontSize: 11, color: "var(--success)", padding: "2px 0" }}>{info}</div>}
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={() => submit(action)} disabled={busy} className="account-btn account-btn-primary" style={{ flex: 1 }}>
-              {busy ? <span className="ai-spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> : label}
+              {busy ? <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> : label}
             </button>
             <button onClick={() => { setMode(null); setError(null); setInfo(null); }} className="account-btn account-btn-secondary" style={{ padding: "10px 16px" }}>
               Annuleer
@@ -585,6 +501,15 @@ export default function GearChecklist() {
   const [user, setUser] = useState(null);
   const [syncStatus, setSyncStatus] = useState("local");
   const [conflictData, setConflictData] = useState(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState(null);
+  const [dialog, setDialog] = useState(null); // { type:'confirm'|'input'|'alert', title, message, defaultValue?, onConfirm, onCancel? }
+  const [toasts, setToasts] = useState([]);
+  const addToast = useCallback((message, type = "info", duration = 3000) => {
+    const id = Date.now() + Math.random();
+    setToasts(t => [...t, { id, message, type }]);
+    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), duration);
+  }, []);
+  const undoRef = useRef(null);
   const saveTimeout = useRef(null);
   const userRef = useRef(null);
   const dataRef = useRef(null);
@@ -753,7 +678,7 @@ export default function GearChecklist() {
       const u = userRef.current;
       if (u) {
         setSyncStatus("syncing");
-        saveRemote(u.uid, stamped).then(() => setSyncStatus("synced")).catch(() => setSyncStatus("error"));
+        saveRemote(u.uid, stamped).then(() => { setSyncStatus("synced"); setLastSyncedAt(new Date()); }).catch(() => setSyncStatus("error"));
       }
     }, 300);
   }, []);
@@ -813,6 +738,26 @@ export default function GearChecklist() {
   };
 
   // ─── CRUD ──────────────────────────────────────────────────
+  const deleteWithUndo = (label, newData) => {
+    const prev = data;
+    undoRef.current = prev;
+    persist(newData);
+    const id = Date.now() + Math.random();
+    setToasts(t => [...t, { id, message: `${label} verwijderd`, type: "info", undo: true }]);
+    const timer = setTimeout(() => { setToasts(t => t.filter(x => x.id !== id)); undoRef.current = null; }, 5000);
+    // Store timer so undo can clear it
+    undoRef.current = { prev, timerId: timer, toastId: id };
+  };
+  const handleUndo = () => {
+    if (!undoRef.current) return;
+    const { prev, timerId, toastId } = undoRef.current;
+    clearTimeout(timerId);
+    setToasts(t => t.filter(x => x.id !== toastId));
+    persist(prev);
+    undoRef.current = null;
+    addToast("Ongedaan gemaakt", "success");
+  };
+
   const addCategory = (name) => persist({ ...data, categories: [...data.categories, { id: generateId(), name, itemIds: [], budget: null }] });
   const updateCategory = (id, u) => persist({ ...data, categories: data.categories.map(c => c.id === id ? { ...c, ...u } : c) });
   const deleteCategory = (id) => {
@@ -823,7 +768,7 @@ export default function GearChecklist() {
       if (item) (item.optionIds || []).forEach(oid => { const o = no[oid]; if (o) (o.supplierIds || []).forEach(sid => delete ns[sid]); delete no[oid]; });
       delete ni[iid];
     });
-    persist({ ...data, categories: data.categories.filter(c => c.id !== id), items: ni, options: no, suppliers: ns });
+    deleteWithUndo(cat.name, { ...data, categories: data.categories.filter(c => c.id !== id), items: ni, options: no, suppliers: ns });
   };
   const addItem = (catId, name) => {
     const id = generateId();
@@ -834,7 +779,7 @@ export default function GearChecklist() {
     const item = data.items[id]; const no = { ...data.options }, ns = { ...data.suppliers }, ni = { ...data.items };
     (item.optionIds||[]).forEach(oid => { const o = no[oid]; if (o) (o.supplierIds||[]).forEach(sid => delete ns[sid]); delete no[oid]; });
     delete ni[id];
-    persist({ ...data, categories: data.categories.map(c => c.id === item.categoryId ? { ...c, itemIds: (c.itemIds||[]).filter(i => i !== id) } : c), items: ni, options: no, suppliers: ns });
+    deleteWithUndo(item.name, { ...data, categories: data.categories.map(c => c.id === item.categoryId ? { ...c, itemIds: (c.itemIds||[]).filter(i => i !== id) } : c), items: ni, options: no, suppliers: ns });
   };
   const addOption = (itemId, name) => {
     const id = generateId();
@@ -844,7 +789,7 @@ export default function GearChecklist() {
   const deleteOption = (id) => {
     const o = data.options[id]; const ns = { ...data.suppliers }, no = { ...data.options };
     (o.supplierIds||[]).forEach(sid => delete ns[sid]); delete no[id];
-    persist({ ...data, items: { ...data.items, [o.itemId]: { ...data.items[o.itemId], optionIds: (data.items[o.itemId].optionIds||[]).filter(x => x !== id) } }, options: no, suppliers: ns });
+    deleteWithUndo(o.name, { ...data, items: { ...data.items, [o.itemId]: { ...data.items[o.itemId], optionIds: (data.items[o.itemId].optionIds||[]).filter(x => x !== id) } }, options: no, suppliers: ns });
   };
   const addSupplier = (optId, name) => {
     const id = generateId();
@@ -853,7 +798,7 @@ export default function GearChecklist() {
   const updateSupplier = (id, u) => persist({ ...data, suppliers: { ...data.suppliers, [id]: { ...data.suppliers[id], ...u } } });
   const deleteSupplier = (id) => {
     const s = data.suppliers[id]; const ns = { ...data.suppliers }; delete ns[id];
-    persist({ ...data, options: { ...data.options, [s.optionId]: { ...data.options[s.optionId], supplierIds: (data.options[s.optionId].supplierIds||[]).filter(x => x !== id) } }, suppliers: ns });
+    deleteWithUndo(s.name, { ...data, options: { ...data.options, [s.optionId]: { ...data.options[s.optionId], supplierIds: (data.options[s.optionId].supplierIds||[]).filter(x => x !== id) } }, suppliers: ns });
   };
 
   // ─── Check logic (upward only) ────────────────────────────
@@ -892,21 +837,130 @@ export default function GearChecklist() {
     if (ss.length < 2) return null; return ss.reduce((m, s) => s.price < m.price ? s : m).id;
   };
 
-  const exportData = () => { const b = new Blob([JSON.stringify(data,null,2)],{type:"application/json"}); const a = document.createElement("a"); a.href=URL.createObjectURL(b); a.download="gear-checklist.json"; a.click(); };
-  const importData = () => { const i = document.createElement("input"); i.type="file"; i.accept=".json"; i.onchange=async(e)=>{ const f=e.target.files[0]; if(!f) return; try{const d=JSON.parse(await f.text()); if(d.categories&&d.items) persist(d);}catch{alert("Ongeldig bestand");}}; i.click(); };
-  const resetData = () => { if (confirm("Alle data wissen?")) persist({ ...DEFAULT_DATA }); };
   const setApiKey = () => {
     const current = loadLocalApiKey();
-    const key = prompt("Anthropic API key (voor AI beschrijvingen).\nLaat leeg om te wissen:", current);
-    if (key === null) return;
-    saveLocalApiKey(key);
-    // Sync to Firestore for non-anonymous users
-    if (user && !user.isAnonymous) {
-      saveSettings(user.uid, { apiKey: key.trim() || null });
+    setDialog({
+      type: "input", title: "API Key", message: "Anthropic API key (voor AI aanbevelingen).\nLaat leeg om te wissen:",
+      defaultValue: current || "",
+      onConfirm: (key) => {
+        saveLocalApiKey(key);
+        if (user && !user.isAnonymous) saveSettings(user.uid, { apiKey: key.trim() || null });
+        addToast(key.trim() ? "API key opgeslagen" : "API key verwijderd", "success");
+      },
+    });
+  };
+
+  // ─── AI Recommend / Suggest ───────────────────────────────
+  const aiForItem = async (itemId) => {
+    const apiKey = loadLocalApiKey();
+    if (!apiKey) { setDialog({ type: "alert", title: "API Key nodig", message: "Stel eerst een Anthropic API key in via het acties menu (⋮)." }); return; }
+
+    const item = data.items[itemId];
+    const cat = data.categories.find(c => c.id === item.categoryId);
+    const opts = (item.optionIds || []).map(oid => data.options[oid]).filter(Boolean);
+    const hasOptions = opts.length >= 2;
+
+    // Build context
+    const optionDetails = opts.map(o => {
+      const sups = (o.supplierIds || []).map(sid => data.suppliers[sid]).filter(Boolean);
+      const prices = sups.filter(s => s.price != null).map(s => `${s.name}: €${s.price.toFixed(2)}`);
+      return `- ${o.name}${prices.length ? ` (${prices.join(", ")})` : ""}`;
+    }).join("\n");
+
+    let prompt;
+    if (hasOptions) {
+      prompt = `Je bent een ervaren outdoor/gear adviseur. Analyseer de volgende opties voor "${item.name}" (categorie: ${cat?.name || "onbekend"}) en kies de beste aanbeveling voor dit gebruik.
+
+Opties:
+${optionDetails}
+
+Antwoord in JSON: { "recommendedIndex": <0-based index>, "reason": "<korte reden in het Nederlands, max 15 woorden>" }
+Alleen JSON, geen andere tekst.`;
+    } else {
+      prompt = `Je bent een ervaren outdoor/gear adviseur. Stel 3 goede opties voor voor "${item.name}" (categorie: ${cat?.name || "onbekend"}).
+
+Focus op opties met een goede prijs-kwaliteitverhouding die populair zijn onder kampeerders/hikers.
+
+Antwoord in JSON: { "suggestions": ["naam1", "naam2", "naam3"] }
+Alleen JSON, geen andere tekst.`;
+    }
+
+    // Set loading state
+    persist({ ...data, items: { ...data.items, [itemId]: { ...item, aiLoading: true } } });
+
+    try {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey, "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514", max_tokens: 300,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+
+      if (!response.ok) { addToast(`API fout (${response.status})`, "error"); return; }
+
+      const result = await response.json();
+      const text = (result.content || []).filter(b => b.type === "text").map(b => b.text).join("").trim();
+      const parsed = JSON.parse(text);
+
+      const freshData = dataRef.current;
+      const freshItem = freshData.items[itemId];
+
+      if (hasOptions) {
+        // Recommend: mark the best option
+        const recOpt = opts[parsed.recommendedIndex];
+        if (recOpt) {
+          persist({ ...freshData, items: { ...freshData.items, [itemId]: { ...freshItem, aiLoading: false, recommended: { optionId: recOpt.id, reason: parsed.reason } } } });
+          addToast(`"${recOpt.name}" aanbevolen`, "success");
+        }
+      } else {
+        // Suggest: create new options
+        let newData = { ...freshData };
+        const newIds = [];
+        for (const name of (parsed.suggestions || [])) {
+          const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+          newIds.push(id);
+          newData = {
+            ...newData,
+            options: { ...newData.options, [id]: { id, name, itemId, checked: false, supplierIds: [] } },
+          };
+        }
+        newData = { ...newData, items: { ...newData.items, [itemId]: { ...newData.items[itemId], aiLoading: false, optionIds: [...(newData.items[itemId].optionIds || []), ...newIds] } } };
+        persist(newData);
+        addToast(`${parsed.suggestions?.length || 0} opties voorgesteld`, "success");
+      }
+    } catch (e) {
+      console.error("AI error:", e);
+      addToast("AI fout — probeer opnieuw", "error");
+      const freshData = dataRef.current;
+      persist({ ...freshData, items: { ...freshData.items, [itemId]: { ...freshData.items[itemId], aiLoading: false } } });
     }
   };
 
-  if (loading) return <div style={{ display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:"var(--bg)",color:"var(--text)",fontFamily:"var(--font)" }}>Laden...</div>;
+  const exportData = () => { const b = new Blob([JSON.stringify(data,null,2)],{type:"application/json"}); const a = document.createElement("a"); a.href=URL.createObjectURL(b); a.download="gear-checklist.json"; a.click(); };
+  const importData = () => { const i = document.createElement("input"); i.type="file"; i.accept=".json"; i.onchange=async(e)=>{ const f=e.target.files[0]; if(!f) return; try{const d=JSON.parse(await f.text()); if(d.categories&&d.items){ persist(d); addToast("Data geïmporteerd", "success"); }else{ addToast("Ongeldig bestand", "error"); }}catch{ addToast("Ongeldig bestand", "error"); }}; i.click(); };
+  const resetData = () => {
+    setDialog({ type:"confirm", title:"Data wissen", message:"Alle data wissen? Dit kan niet ongedaan worden.", onConfirm: () => { persist({ ...DEFAULT_DATA }); addToast("Data gewist", "success"); } });
+  };
+
+  if (loading) return (
+    <div style={{ minHeight:"100vh", background:"var(--bg)", padding:"24px 12px", maxWidth:800, margin:"0 auto", fontFamily:"var(--font)" }}>
+      <style>{`
+        @keyframes shimmer{0%{background-position:-200px 0}100%{background-position:200px 0}}
+        .skel{background:linear-gradient(90deg,var(--bg-card) 25%,#252830 50%,var(--bg-card) 75%);background-size:400px 100%;animation:shimmer 1.5s infinite;border-radius:8px}
+      `}</style>
+      <div className="skel" style={{ height:28, width:180, marginBottom:16 }} />
+      <div className="skel" style={{ height:44, marginBottom:16 }} />
+      <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+        {[1,2,3].map(i => <div key={i} className="skel" style={{ height:80 }} />)}
+      </div>
+    </div>
+  );
 
   // ─── Supplier Row (2-line on mobile) ───────────────────────
   const SupRow = ({ sup, cheapId }) => (
@@ -914,13 +968,11 @@ export default function GearChecklist() {
       <div className="supplier-main">
         <Checkbox checked={sup.checked} onChange={() => checkSupplier(sup.id)} size={16} color="var(--success)" />
         <InlineEdit value={sup.name} onSave={n => updateSupplier(sup.id, { name: n })}
-          style={{ fontSize: 13, flex: 1, textDecoration: sup.checked ? "line-through" : "none", minWidth: 0 }} />
-        <DeleteBtn onDelete={() => deleteSupplier(sup.id)} size={13} />
-      </div>
-      <div className="supplier-meta">
+          style={{ fontSize: 12, flex: 1, color: sup.checked ? undefined : "var(--text-muted)", textDecoration: sup.checked ? "line-through" : "none", minWidth: 0 }} />
         {sup.id === cheapId && <span className="cheap-badge">GOEDKOOPST</span>}
         <PriceInput value={sup.price} onChange={p => updateSupplier(sup.id, { price: p })} />
         <UrlDisplay url={sup.url} onEdit={u => updateSupplier(sup.id, { url: u })} />
+        <DeleteBtn onDelete={() => deleteSupplier(sup.id)} size={13} />
       </div>
     </div>
   );
@@ -930,45 +982,69 @@ export default function GearChecklist() {
     <div className="view-list">
       {data.categories.filter(c => {
         if (!search) return true; if (matchesSearch(c.name)) return true;
-        return (c.itemIds||[]).some(iid => { const i = data.items[iid]; return i && matchesSearch(i.name); });
+        return (c.itemIds||[]).some(iid => {
+          const i = data.items[iid]; if (!i) return false;
+          if (matchesSearch(i.name)) return true;
+          return (i.optionIds||[]).some(oid => {
+            const o = data.options[oid]; if (!o) return false;
+            if (matchesSearch(o.name)) return true;
+            return (o.supplierIds||[]).some(sid => { const s = data.suppliers[sid]; return s && matchesSearch(s.name); });
+          });
+        });
       }).map(cat => {
         const items = (cat.itemIds||[]).map(iid => data.items[iid]).filter(Boolean);
-        const done = items.filter(i => i.checked).length;
         const isC = collapsed[cat.id];
         return (
           <div key={cat.id} className="card">
-            <div className="cat-header" onClick={() => toggle(cat.id)}>
+            <div className="cat-header" role="button" aria-expanded={!isC} onClick={() => toggle(cat.id)}>
               <div className="cat-top">
                 <Icon name={isC?"chevronRight":"chevronDown"} size={16} />
                 <Icon name="grid" size={16} className="cat-icon" />
                 <InlineEdit value={cat.name} onSave={n => updateCategory(cat.id,{name:n})} style={{ fontWeight:700, fontSize:15, flex:1, minWidth:0 }} />
                 <DeleteBtn onDelete={() => deleteCategory(cat.id)} />
               </div>
-              <div className="cat-progress"><ProgressBar done={done} total={items.length} /></div>
             </div>
             {!isC && (
               <div className="cat-body">
-                {items.filter(it => !search || matchesSearch(it.name)).map(item => {
+                {items.filter(it => {
+                  if (!search) return true; if (matchesSearch(it.name)) return true;
+                  return (it.optionIds||[]).some(oid => {
+                    const o = data.options[oid]; if (!o) return false;
+                    if (matchesSearch(o.name)) return true;
+                    return (o.supplierIds||[]).some(sid => { const s = data.suppliers[sid]; return s && matchesSearch(s.name); });
+                  });
+                }).map(item => {
                   const opts = (item.optionIds||[]).map(oid => data.options[oid]).filter(Boolean);
                   const isIC = collapsed[item.id];
                   return (
                     <div key={item.id} className="item-card">
                       <div className="item-header">
                         <Checkbox checked={item.checked} onChange={() => checkItem(item.id)} />
-                        <div style={{ cursor:"pointer", display:"flex", alignItems:"center", padding:4 }} onClick={() => toggle(item.id)}>
+                        <div style={{ cursor:"pointer", display:"flex", alignItems:"center", padding:4 }} role="button" aria-expanded={!isIC} aria-label={isIC?"Uitklappen":"Inklappen"} onClick={() => toggle(item.id)}>
                           <Icon name={isIC?"chevronRight":"chevronDown"} size={14} />
                         </div>
                         <InlineEdit value={item.name} onSave={n => updateItem(item.id,{name:n})}
                           style={{ fontWeight:600, fontSize:14, flex:1, textDecoration: item.checked?"line-through":"none", opacity: item.checked?0.5:1, minWidth:0 }} />
                         <NoteEditor note={item.note} onSave={n => updateItem(item.id,{note:n})} />
-                        <span className="hide-mobile meta-count">{opts.length} optie{opts.length!==1?"s":""}</span>
+                        <button onClick={(e) => { e.stopPropagation(); aiForItem(item.id); }} disabled={item.aiLoading}
+                          aria-label={opts.length >= 2 ? "AI aanbeveling" : "AI opties voorstellen"}
+                          title={opts.length >= 2 ? "AI: beste optie aanbevelen" : "AI: opties voorstellen"}
+                          className="ai-item-btn">
+                          {item.aiLoading ? <span className="spinner" /> : <Icon name="sparkle" size={14} />}
+                        </button>
+                        {isIC && (() => {
+                          const cheapest = opts.reduce((min, o) => {
+                            (o.supplierIds||[]).forEach(sid => { const s = data.suppliers[sid]; if (s?.price != null && (min===null||s.price<min)) min = s.price; });
+                            return min;
+                          }, null);
+                          return <span className="meta-count" style={{ display:"flex", gap:6, alignItems:"center" }}>
+                            {opts.length} optie{opts.length!==1?"s":""}
+                            {cheapest != null && <span style={{ color:"var(--success)", fontWeight:600 }}>€{cheapest.toFixed(2)}</span>}
+                          </span>;
+                        })()}
+                        {!isIC && <span className="hide-mobile meta-count">{opts.length} optie{opts.length!==1?"s":""}</span>}
                         <DeleteBtn onDelete={() => deleteItem(item.id)} />
                       </div>
-                      <AiDescription
-                        description={item.aiDesc}
-                        onSave={d => updateItem(item.id, { aiDesc: d })}
-                        context={{ type: "item", category: cat.name, name: item.name }}
-                      />
                       {!isIC && (
                         <div className="item-body">
                           {opts.map(opt => {
@@ -979,19 +1055,24 @@ export default function GearChecklist() {
                               <div key={opt.id} className="option-card">
                                 <div className="option-header">
                                   <Checkbox checked={opt.checked} onChange={() => checkOption(opt.id)} size={16} color="var(--accent-alt)" />
-                                  <div style={{ cursor:"pointer", display:"flex", alignItems:"center", padding:4 }} onClick={() => toggle(opt.id)}>
+                                  <div style={{ cursor:"pointer", display:"flex", alignItems:"center", padding:4 }} role="button" aria-expanded={!isOC} aria-label={isOC?"Uitklappen":"Inklappen"} onClick={() => toggle(opt.id)}>
                                     <Icon name={isOC?"chevronRight":"chevronDown"} size={12} />
                                   </div>
                                   <InlineEdit value={opt.name} onSave={n => updateOption(opt.id,{name:n})}
-                                    style={{ fontSize:13, flex:1, textDecoration: opt.checked?"line-through":"none", opacity: opt.checked?0.5:1, minWidth:0 }} />
-                                  <span className="hide-mobile meta-count">{sups.length} aanb.</span>
+                                    style={{ fontSize:13, fontWeight:500, flex:1, textDecoration: opt.checked?"line-through":"none", opacity: opt.checked?0.5:0.9, minWidth:0 }} />
+                                  {item.recommended?.optionId === opt.id && (
+                                    <span className="rec-badge" title={item.recommended.reason}>AANBEVOLEN</span>
+                                  )}
+                                  {isOC && (() => {
+                                    const cheapest = sups.reduce((min, s) => s.price != null && (min===null||s.price<min) ? s.price : min, null);
+                                    return <span className="meta-count" style={{ display:"flex", gap:6, alignItems:"center" }}>
+                                      {sups.length} aanb.
+                                      {cheapest != null && <span style={{ color:"var(--success)", fontWeight:600 }}>€{cheapest.toFixed(2)}</span>}
+                                    </span>;
+                                  })()}
+                                  {!isOC && <span className="hide-mobile meta-count">{sups.length} aanb.</span>}
                                   <DeleteBtn onDelete={() => deleteOption(opt.id)} size={12} />
                                 </div>
-                                <AiDescription
-                                  description={opt.aiDesc}
-                                  onSave={d => updateOption(opt.id, { aiDesc: d })}
-                                  context={{ type: "option", category: cat.name, item: item.name, name: opt.name }}
-                                />
                                 {!isOC && (
                                   <div className="option-body">
                                     {sups.map(s => <SupRow key={s.id} sup={s} cheapId={cheapId} />)}
@@ -1007,7 +1088,7 @@ export default function GearChecklist() {
                     </div>
                   );
                 })}
-                <div style={{ marginTop: 6 }}>
+                <div style={{ marginTop: 12 }}>
                   <AddInput onAdd={n => addItem(cat.id,n)} placeholder="Voorwerp..." compact />
                 </div>
               </div>
@@ -1021,7 +1102,14 @@ export default function GearChecklist() {
 
   // ─── ITEM VIEW ─────────────────────────────────────────────
   const renderItemView = () => {
-    const all = Object.values(data.items).filter(i => matchesSearch(i.name)).sort((a,b) => a.name.localeCompare(b.name));
+    const all = Object.values(data.items).filter(i => {
+      if (matchesSearch(i.name)) return true;
+      return (i.optionIds||[]).some(oid => {
+        const o = data.options[oid]; if (!o) return false;
+        if (matchesSearch(o.name)) return true;
+        return (o.supplierIds||[]).some(sid => { const s = data.suppliers[sid]; return s && matchesSearch(s.name); });
+      });
+    }).sort((a,b) => a.name.localeCompare(b.name));
     return (
       <div className="view-list">
         {all.map(item => {
@@ -1158,28 +1246,26 @@ export default function GearChecklist() {
         .check-icon{color:#fff} .cat-icon{color:var(--accent)}
         button:active{transform:scale(0.97)} a{text-decoration:none}
 
-        .app-root{min-height:100vh;background:var(--bg);color:var(--text);font-family:var(--font);padding:env(safe-area-inset-top,16px) 12px 80px;max-width:800px;margin:0 auto}
-        .view-list{display:flex;flex-direction:column;gap:10px}
+        .app-root{min-height:100vh;background:var(--bg);color:var(--text);font-family:var(--font);padding:env(safe-area-inset-top,20px) 16px 80px;max-width:800px;margin:0 auto}
+        .view-list{display:flex;flex-direction:column;gap:16px}
         .card{background:var(--bg-card);border-radius:12px;border:1px solid var(--border);overflow:hidden}
         .empty{color:var(--text-muted);text-align:center;padding:32px}
 
-        .cat-header{cursor:pointer;user-select:none;padding:12px}
-        .cat-top{display:flex;align-items:center;gap:6px}
-        .cat-progress{margin-top:6px;padding-left:38px}
-        .cat-body{padding:0 8px 10px}
+        .cat-header{cursor:pointer;user-select:none;padding:14px 16px}
+        .cat-top{display:flex;align-items:center;gap:8px}
+        .cat-body{padding:4px 16px 18px}
 
-        .item-card{margin-top:6px;padding:8px;background:var(--bg-nested);border-radius:8px;border:1px solid var(--border-light)}
-        .item-header{display:flex;align-items:center;gap:2px;flex-wrap:nowrap}
-        .item-body{margin-top:6px;padding-left:12px}
+        .item-card{margin-top:12px;padding:14px 16px;background:var(--bg-nested);border-radius:10px;border:1px solid var(--border-light);border-left:3px solid var(--accent)}
+        .item-header{display:flex;align-items:center;gap:8px;flex-wrap:nowrap}
+        .item-body{margin-top:14px;padding-left:16px;display:flex;flex-direction:column;gap:12px}
 
-        .option-card{margin-top:4px;padding:6px 8px;background:var(--bg-card);border-radius:6px;border:1px solid var(--border-light)}
-        .option-header{display:flex;align-items:center;gap:2px}
-        .option-body{margin-top:4px;padding-left:8px}
+        .option-card{padding:12px 14px;background:rgba(139,92,246,0.06);border-radius:8px;border:1px solid var(--border-light);border-left:3px solid var(--accent-alt)}
+        .option-header{display:flex;align-items:center;gap:8px}
+        .option-body{margin-top:12px;padding-left:12px;display:flex;flex-direction:column;gap:10px}
 
-        .supplier-row{padding:6px 0;border-bottom:1px solid var(--border-light)}
-        .supplier-row:last-of-type{border-bottom:none}
-        .supplier-main{display:flex;align-items:center;gap:2px}
-        .supplier-meta{display:flex;align-items:center;gap:8px;margin-top:2px;padding-left:44px;flex-wrap:wrap}
+        .supplier-row{padding:8px 10px;border-left:3px solid var(--success);background:rgba(74,222,128,0.06);border-radius:6px}
+        .supplier-row+.supplier-row{margin-top:6px}
+        .supplier-main{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
         .cheap-badge{font-size:10px;color:var(--success);font-weight:700;padding:2px 6px;background:rgba(76,175,80,0.15);border-radius:4px;white-space:nowrap}
 
         .meta-count{font-size:11px;color:var(--text-muted);white-space:nowrap}
@@ -1204,7 +1290,9 @@ export default function GearChecklist() {
         .search-icon{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--text-muted);pointer-events:none}
         .search-input{width:100%;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:12px 12px 12px 38px;color:var(--text);outline:none;font-size:14px;font-family:inherit}
 
-        .add-input{display:flex;gap:6px;align-items:center}
+        .add-trigger{display:flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;border:1px dashed var(--border);background:none;color:var(--text-muted);cursor:pointer;font-size:12px;font-family:inherit;font-weight:500;transition:all 0.15s;width:100%}
+        .add-trigger:hover{border-color:var(--accent);color:var(--accent);background:rgba(59,130,246,0.06)}
+        .add-popover{display:flex;gap:6px;align-items:center;animation:fadeIn 0.15s ease}
 
         .chip-row{display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px;scrollbar-width:none}
         .chip-row::-webkit-scrollbar{display:none}
@@ -1219,22 +1307,8 @@ export default function GearChecklist() {
 
         .note-popup{width:260px;right:0}
 
-        /* ─ AI Description ─ */
-        .ai-desc-bar{display:flex;align-items:center;gap:6px;padding:4px 8px;margin-top:4px;cursor:pointer;border-radius:6px;background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.12);transition:background 0.15s}
-        .ai-desc-bar:hover{background:rgba(59,130,246,0.1)}
-        .ai-desc-preview{font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
-        .ai-icon{color:var(--accent);flex-shrink:0}
-        .ai-desc-full{margin-top:4px;padding:8px 10px;border-radius:8px;background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.12)}
-        .ai-desc-header{display:flex;align-items:center;gap:6px;margin-bottom:6px}
-        .ai-desc-text{font-size:12px;line-height:1.5;color:var(--text);margin:0;opacity:0.85}
-        .ai-action-btn{background:none;border:none;color:var(--text-muted);cursor:pointer;padding:4px;display:flex;align-items:center;border-radius:4px;min-width:28px;min-height:28px;justify-content:center}
-        .ai-action-btn:hover{color:var(--accent);background:rgba(59,130,246,0.1)}
-        .ai-gen-btn{display:flex;align-items:center;gap:6px;padding:6px 10px;margin-top:4px;background:rgba(59,130,246,0.08);border:1px dashed rgba(59,130,246,0.25);border-radius:6px;color:var(--accent);font-size:12px;cursor:pointer;font-family:inherit;font-weight:500;transition:all 0.15s}
-        .ai-gen-btn:hover{background:rgba(59,130,246,0.15);border-color:var(--accent)}
-        .ai-gen-btn:disabled{opacity:0.6;cursor:wait}
-        .ai-loading{font-size:11px;color:var(--accent);margin-top:4px;opacity:0.7}
         @keyframes spin{to{transform:rotate(360deg)}}
-        .ai-spinner{display:inline-block;width:13px;height:13px;border:2px solid rgba(59,130,246,0.3);border-top-color:var(--accent);border-radius:50%;animation:spin 0.6s linear infinite;flex-shrink:0}
+        .spinner{display:inline-block;width:13px;height:13px;border:2px solid rgba(59,130,246,0.3);border-top-color:var(--accent);border-radius:50%;animation:spin 0.6s linear infinite;flex-shrink:0}
 
         /* ─ Sync ─ */
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
@@ -1252,31 +1326,58 @@ export default function GearChecklist() {
         @keyframes fadeIn{from{opacity:0}to{opacity:1}}
         @keyframes slideUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 
+        /* ─ AI ─ */
+        .ai-item-btn{background:none;border:1px solid var(--border);border-radius:6px;color:var(--accent);cursor:pointer;padding:4px 6px;display:flex;align-items:center;justify-content:center;min-width:30px;min-height:30px;flex-shrink:0;transition:all 0.15s}
+        .ai-item-btn:hover{background:rgba(59,130,246,0.1);border-color:var(--accent)}
+        .ai-item-btn:disabled{opacity:0.5;cursor:wait}
+        .rec-badge{font-size:10px;color:var(--accent-alt);font-weight:700;padding:2px 6px;background:rgba(139,92,246,0.15);border-radius:4px;white-space:nowrap;flex-shrink:0}
+
+        /* ─ Inline Edit ─ */
+        .inline-editable:hover{border-bottom-color:var(--border)!important}
+
+        /* ─ Toast ─ */
+        .toast-container{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:1100;display:flex;flex-direction:column;gap:8px;pointer-events:none;max-width:360px;width:calc(100% - 32px)}
+        .toast{pointer-events:auto;padding:12px 16px;border-radius:10px;font-size:13px;font-weight:500;font-family:var(--font);animation:slideUp 0.25s ease;box-shadow:0 8px 24px rgba(0,0,0,0.4)}
+        .toast-info{background:var(--bg-card);border:1px solid var(--border);color:var(--text)}
+        .toast-success{background:rgba(74,222,128,0.15);border:1px solid var(--success);color:var(--success)}
+        .toast-error{background:rgba(239,68,68,0.15);border:1px solid var(--danger);color:var(--danger)}
+
+        /* ─ Accessibility ─ */
+        .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
+        :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+        input:focus:not(:focus-visible),textarea:focus:not(:focus-visible),button:focus:not(:focus-visible){outline:none}
+        @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:0.01ms!important;animation-iteration-count:1!important;transition-duration:0.01ms!important}}
+
         /* ─── DESKTOP ─── */
         @media(min-width:640px){
-          .app-root{padding:24px 20px 60px}
-          .cat-body{padding:0 16px 12px}
-          .cat-progress{padding-left:38px}
-          .item-body{padding-left:24px}
-          .option-body{padding-left:16px}
+          .app-root{padding:28px 24px 60px}
+          .cat-header{padding:16px 20px}
+          .cat-body{padding:4px 20px 20px}
+
+          .item-card{padding:16px 20px}
+          .item-body{padding-left:20px;gap:12px}
+          .option-card{padding:14px 16px}
+          .option-body{padding-left:16px;gap:10px}
+          .supplier-row{padding:10px 12px}
           .supplier-meta{padding-left:48px}
           .budget-value{font-size:26px}
-          .item-header{gap:4px}
-          .option-header{gap:4px}
-          .supplier-main{gap:4px}
+          .item-header{gap:10px}
+          .option-header{gap:10px}
+          .supplier-main{gap:10px}
         }
 
         /* ─── MOBILE ─── */
         @media(max-width:480px){
           .hide-mobile{display:none!important}
           .add-label{display:none}
-          .item-body{padding-left:4px}
-          .option-body{padding-left:2px}
+          .item-card{padding:10px 12px}
+          .item-body{padding-left:8px}
+          .option-card{padding:10px 12px}
+          .option-body{padding-left:6px}
           .supplier-meta{padding-left:40px}
           .budget-grid{grid-template-columns:1fr 1fr 1fr;gap:4px}
           .budget-value{font-size:18px}
           .note-popup{width:calc(100vw - 48px);right:-20px}
-          .cat-progress{padding-left:0}
           .tab-btn{padding:10px 12px;font-size:12px}
           .sup-card-header{padding:10px}
           .sup-card-body{padding:4px 10px 8px}
@@ -1325,6 +1426,40 @@ export default function GearChecklist() {
         </div>
       )}
 
+      {/* Custom Dialog */}
+      {dialog && (() => {
+        const DialogInput = () => {
+          const [val, setVal] = useState(dialog.defaultValue || "");
+          return <>
+            <input autoFocus value={val} onChange={e => setVal(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") { dialog.onConfirm?.(val); setDialog(null); } if (e.key === "Escape") setDialog(null); }}
+              className="account-input" style={{ marginBottom: 12, width: "100%" }} />
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={() => setDialog(null)} className="account-btn account-btn-secondary" style={{ flex:1 }}>Annuleren</button>
+              <button onClick={() => { dialog.onConfirm?.(val); setDialog(null); }} className="account-btn account-btn-primary" style={{ flex:1 }}>OK</button>
+            </div>
+          </>;
+        };
+        return (
+          <div className="conflict-overlay" onClick={() => setDialog(null)}>
+            <div className="conflict-card" onClick={e => e.stopPropagation()}>
+              <h3 style={{ fontSize:16, fontWeight:700, marginBottom:8 }}>{dialog.title}</h3>
+              {dialog.message && <p style={{ fontSize:13, color:"var(--text-muted)", marginBottom:12, lineHeight:1.6, whiteSpace:"pre-wrap" }}>{dialog.message}</p>}
+              {dialog.type === "confirm" && (
+                <div style={{ display:"flex", gap:8 }}>
+                  <button onClick={() => setDialog(null)} className="account-btn account-btn-secondary" style={{ flex:1 }}>Annuleren</button>
+                  <button onClick={() => { dialog.onConfirm?.(); setDialog(null); }} className="account-btn account-btn-primary" style={{ flex:1, background:"var(--danger)" }}>Bevestigen</button>
+                </div>
+              )}
+              {dialog.type === "input" && <DialogInput />}
+              {dialog.type === "alert" && (
+                <button onClick={() => setDialog(null)} className="account-btn account-btn-primary" style={{ width:"100%" }}>OK</button>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Header */}
       <div style={{ marginBottom:14, paddingTop: 4 }}>
         <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between" }}>
@@ -1332,7 +1467,7 @@ export default function GearChecklist() {
             <span style={{ color:"var(--accent)" }}>⬡</span> Gear Checklist
             <SyncIndicator status={syncStatus} compact />
           </h1>
-          <button onClick={() => setShowActions(!showActions)} style={{ background:"none",border:"none",color:"var(--text-muted)",cursor:"pointer",padding:8,minWidth:40,minHeight:40,display:"flex",alignItems:"center",justifyContent:"center" }}>
+          <button aria-label="Acties menu" onClick={() => setShowActions(!showActions)} style={{ background:"none",border:"none",color:"var(--text-muted)",cursor:"pointer",padding:8,minWidth:40,minHeight:40,display:"flex",alignItems:"center",justifyContent:"center" }}>
             <Icon name="more" size={20} />
           </button>
         </div>
@@ -1344,6 +1479,11 @@ export default function GearChecklist() {
               {stats.checkedBudget>stats.setBudget?"⚠ ":""}rest: {formatPrice(stats.setBudget-stats.checkedBudget)}
             </span>
           )}
+          {lastSyncedAt && (
+            <span style={{ color:"var(--text-muted)", fontSize:11, marginLeft:"auto" }} title={lastSyncedAt.toLocaleTimeString()}>
+              Sync: {lastSyncedAt.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" })}
+            </span>
+          )}
         </div>
       </div>
 
@@ -1352,8 +1492,8 @@ export default function GearChecklist() {
           <div className="action-row" style={{ marginBottom: 0 }}>
             <button onClick={exportData} className="action-btn"><Icon name="download" size={14} /> Export</button>
             <button onClick={importData} className="action-btn"><Icon name="upload" size={14} /> Import</button>
-            <button onClick={resetData} className="action-btn danger"><Icon name="reset" size={14} /> Wissen</button>
             <button onClick={setApiKey} className="action-btn"><Icon name="sparkle" size={14} /> API Key</button>
+            <button onClick={resetData} className="action-btn danger"><Icon name="reset" size={14} /> Wissen</button>
           </div>
           <AccountPanel user={user} syncStatus={syncStatus}
             onSignIn={handleSignIn} onRegister={handleRegister} onLink={handleLink} onSignOut={handleSignOut} />
@@ -1376,6 +1516,16 @@ export default function GearChecklist() {
       )}
 
       {views[view]()}
+
+      {/* Toasts */}
+      {toasts.length > 0 && (
+        <div className="toast-container" role="status" aria-live="polite">
+          {toasts.map(t => <div key={t.id} className={`toast toast-${t.type}`} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12 }}>
+            <span>{t.message}</span>
+            {t.undo && <button onClick={handleUndo} style={{ background:"none", border:"1px solid var(--accent)", borderRadius:6, color:"var(--accent)", padding:"4px 10px", fontSize:12, cursor:"pointer", fontFamily:"inherit", fontWeight:600, whiteSpace:"nowrap" }}>Ongedaan maken</button>}
+          </div>)}
+        </div>
+      )}
     </div>
   );
 }
