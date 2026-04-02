@@ -503,6 +503,7 @@ export default function GearChecklist() {
   const [conflictData, setConflictData] = useState(null);
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const [dialog, setDialog] = useState(null); // { type:'confirm'|'input'|'alert', title, message, defaultValue?, onConfirm, onCancel? }
+  const [aiLoadingItems, setAiLoadingItems] = useState(new Set());
   const [toasts, setToasts] = useState([]);
   const addToast = useCallback((message, type = "info", duration = 3000) => {
     const id = Date.now() + Math.random();
@@ -867,9 +868,11 @@ export default function GearChecklist() {
       return `- ${o.name}${prices.length ? ` (${prices.join(", ")})` : ""}`;
     }).join("\n");
 
+    const noteCtx = item.note ? `\nNotities van de gebruiker: "${item.note}"` : "";
+
     let prompt;
     if (hasOptions) {
-      prompt = `Je bent een ervaren outdoor/gear adviseur. Analyseer de volgende opties voor "${item.name}" (categorie: ${cat?.name || "onbekend"}) en kies de beste aanbeveling voor dit gebruik.
+      prompt = `Je bent een ervaren outdoor/gear adviseur. Analyseer de volgende opties voor "${item.name}" (categorie: ${cat?.name || "onbekend"}) en kies de beste aanbeveling voor dit gebruik.${noteCtx}
 
 Opties:
 ${optionDetails}
@@ -877,16 +880,15 @@ ${optionDetails}
 Antwoord in JSON: { "recommendedIndex": <0-based index>, "reason": "<korte reden in het Nederlands, max 15 woorden>" }
 Alleen JSON, geen andere tekst.`;
     } else {
-      prompt = `Je bent een ervaren outdoor/gear adviseur. Stel 3 goede opties voor voor "${item.name}" (categorie: ${cat?.name || "onbekend"}).
+      prompt = `Je bent een ervaren outdoor/gear adviseur. Stel 3 goede opties voor voor "${item.name}" (categorie: ${cat?.name || "onbekend"}).${noteCtx}
 
-Focus op opties met een goede prijs-kwaliteitverhouding die populair zijn onder kampeerders/hikers.
+Focus op opties met een goede prijs-kwaliteitverhouding die populair zijn onder kampeerders/hikers. Geef ook aan welke optie je het meest aanbeveelt.
 
-Antwoord in JSON: { "suggestions": ["naam1", "naam2", "naam3"] }
+Antwoord in JSON: { "suggestions": ["naam1", "naam2", "naam3"], "recommendedIndex": <0-based index van de beste>, "reason": "<korte reden in het Nederlands, max 15 woorden>" }
 Alleen JSON, geen andere tekst.`;
     }
 
-    // Set loading state
-    persist({ ...data, items: { ...data.items, [itemId]: { ...item, aiLoading: true } } });
+    setAiLoadingItems(s => new Set(s).add(itemId));
 
     try {
       const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -906,20 +908,18 @@ Alleen JSON, geen andere tekst.`;
 
       const result = await response.json();
       const text = (result.content || []).filter(b => b.type === "text").map(b => b.text).join("").trim();
-      const parsed = JSON.parse(text);
+      const jsonStr = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/,"").trim();
+      const parsed = JSON.parse(jsonStr);
 
       const freshData = dataRef.current;
-      const freshItem = freshData.items[itemId];
 
       if (hasOptions) {
-        // Recommend: mark the best option
         const recOpt = opts[parsed.recommendedIndex];
         if (recOpt) {
-          persist({ ...freshData, items: { ...freshData.items, [itemId]: { ...freshItem, aiLoading: false, recommended: { optionId: recOpt.id, reason: parsed.reason } } } });
+          persist({ ...freshData, items: { ...freshData.items, [itemId]: { ...freshData.items[itemId], recommended: { optionId: recOpt.id, reason: parsed.reason } } } });
           addToast(`"${recOpt.name}" aanbevolen`, "success");
         }
       } else {
-        // Suggest: create new options
         let newData = { ...freshData };
         const newIds = [];
         for (const name of (parsed.suggestions || [])) {
@@ -930,15 +930,18 @@ Alleen JSON, geen andere tekst.`;
             options: { ...newData.options, [id]: { id, name, itemId, checked: false, supplierIds: [] } },
           };
         }
-        newData = { ...newData, items: { ...newData.items, [itemId]: { ...newData.items[itemId], aiLoading: false, optionIds: [...(newData.items[itemId].optionIds || []), ...newIds] } } };
+        const recId = newIds[parsed.recommendedIndex] || newIds[0];
+        const recReason = parsed.reason || "Beste keuze";
+        newData = { ...newData, items: { ...newData.items, [itemId]: { ...newData.items[itemId], optionIds: [...(newData.items[itemId].optionIds || []), ...newIds], recommended: { optionId: recId, reason: recReason } } } };
         persist(newData);
-        addToast(`${parsed.suggestions?.length || 0} opties voorgesteld`, "success");
+        const recName = parsed.suggestions?.[parsed.recommendedIndex] || parsed.suggestions?.[0];
+        addToast(`${parsed.suggestions?.length || 0} opties voorgesteld — "${recName}" aanbevolen`, "success");
       }
     } catch (e) {
       console.error("AI error:", e);
       addToast("AI fout — probeer opnieuw", "error");
-      const freshData = dataRef.current;
-      persist({ ...freshData, items: { ...freshData.items, [itemId]: { ...freshData.items[itemId], aiLoading: false } } });
+    } finally {
+      setAiLoadingItems(s => { const n = new Set(s); n.delete(itemId); return n; });
     }
   };
 
@@ -1026,11 +1029,11 @@ Alleen JSON, geen andere tekst.`;
                         <InlineEdit value={item.name} onSave={n => updateItem(item.id,{name:n})}
                           style={{ fontWeight:600, fontSize:14, flex:1, textDecoration: item.checked?"line-through":"none", opacity: item.checked?0.5:1, minWidth:0 }} />
                         <NoteEditor note={item.note} onSave={n => updateItem(item.id,{note:n})} />
-                        <button onClick={(e) => { e.stopPropagation(); aiForItem(item.id); }} disabled={item.aiLoading}
+                        <button onClick={(e) => { e.stopPropagation(); aiForItem(item.id); }} disabled={aiLoadingItems.has(item.id)}
                           aria-label={opts.length >= 2 ? "AI aanbeveling" : "AI opties voorstellen"}
                           title={opts.length >= 2 ? "AI: beste optie aanbevelen" : "AI: opties voorstellen"}
                           className="ai-item-btn">
-                          {item.aiLoading ? <span className="spinner" /> : <Icon name="sparkle" size={14} />}
+                          {aiLoadingItems.has(item.id) ? <span className="spinner" /> : <Icon name="sparkle" size={14} />}
                         </button>
                         {isIC && (() => {
                           const cheapest = opts.reduce((min, o) => {
