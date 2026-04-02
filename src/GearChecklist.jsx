@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import {
+  loadLocal, saveLocal, subscribeRemote, saveRemote,
+  subscribeAuth, signInAnon, signInEmail, registerEmail, linkEmail, signOut,
+  loadLocalApiKey, saveLocalApiKey, loadSettings, saveSettings,
+} from "./storage";
 
-const STORAGE_KEY = "gear-checklist-data";
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
 const DEFAULT_DATA = {
@@ -10,18 +14,6 @@ const DEFAULT_DATA = {
   suppliers: {},
   totalBudget: null,
 };
-
-async function loadData() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
-}
-
-async function saveData(data) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }
-  catch (e) { console.error("Storage save failed:", e); }
-}
 
 // ─── Icons ─────────────────────────────────────────────────────
 const Icon = ({ name, size = 18, className = "" }) => {
@@ -450,6 +442,93 @@ const BudgetField = ({ value, onChange, placeholder = "Budget...", compact = fal
 };
 
 // ═══════════════════════════════════════════════════════════════
+// ─── Sync Status Dot ──────────────────────────────────────────
+const SyncDot = ({ status }) => {
+  const colors = { local: "#6b7280", syncing: "#f59e0b", synced: "#4ade80", offline: "#6b7280", error: "#ef4444" };
+  const labels = { local: "Lokaal", syncing: "Synchroniseren...", synced: "Gesynchroniseerd", offline: "Offline", error: "Sync fout" };
+  return (
+    <span title={labels[status] || "Lokaal"} style={{
+      display: "inline-block", width: 8, height: 8, borderRadius: "50%",
+      background: colors[status] || colors.local, flexShrink: 0,
+    }} />
+  );
+};
+
+// ─── Account Panel ────────────────────────────────────────────
+const AccountPanel = ({ user, syncStatus, onSignIn, onRegister, onLink, onSignOut }) => {
+  const [mode, setMode] = useState(null); // null | 'login' | 'register' | 'link'
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (action) => {
+    setBusy(true); setError(null);
+    try {
+      await action(email, password);
+      setMode(null); setEmail(""); setPassword("");
+    } catch (e) {
+      setError(e.message || "Er ging iets mis");
+    }
+    setBusy(false);
+  };
+
+  if (mode) {
+    const action = mode === "login" ? onSignIn : mode === "register" ? onRegister : onLink;
+    const label = mode === "login" ? "Inloggen" : mode === "register" ? "Registreren" : "Account koppelen";
+    return (
+      <div style={{ padding: "8px 0", display: "flex", flexDirection: "column", gap: 6 }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--accent)" }}>{label}</span>
+        <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="E-mail"
+          style={{ background: "var(--bg-input)", border: "1px solid var(--border)", borderRadius: 6, padding: "8px 10px", color: "var(--text)", outline: "none", fontSize: 13, fontFamily: "inherit" }} />
+        <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Wachtwoord"
+          onKeyDown={e => e.key === "Enter" && submit(action)}
+          style={{ background: "var(--bg-input)", border: "1px solid var(--border)", borderRadius: 6, padding: "8px 10px", color: "var(--text)", outline: "none", fontSize: 13, fontFamily: "inherit" }} />
+        {error && <div style={{ fontSize: 11, color: "var(--danger)" }}>{error}</div>}
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={() => submit(action)} disabled={busy}
+            style={{ flex: 1, background: "var(--accent)", border: "none", borderRadius: 6, color: "#fff", padding: "8px 0", fontSize: 13, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, opacity: busy ? 0.6 : 1 }}>
+            {busy ? "..." : label}
+          </button>
+          <button onClick={() => { setMode(null); setError(null); }}
+            style={{ background: "var(--bg-input)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", padding: "8px 12px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+            Annuleer
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (user && !user.isAnonymous) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", flexWrap: "wrap" }}>
+        <SyncDot status={syncStatus} />
+        <span style={{ fontSize: 12, color: "var(--text-muted)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{user.email}</span>
+        <button onClick={onSignOut} className="action-btn" style={{ fontSize: 11, padding: "6px 10px" }}>Uitloggen</button>
+      </div>
+    );
+  }
+
+  if (user && user.isAnonymous) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 0", flexWrap: "wrap" }}>
+        <SyncDot status={syncStatus} />
+        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Anoniem</span>
+        <button onClick={() => setMode("link")} className="action-btn" style={{ fontSize: 11, padding: "6px 10px" }}>Account koppelen</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 0", flexWrap: "wrap" }}>
+      <SyncDot status={syncStatus} />
+      <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Niet ingelogd</span>
+      <button onClick={() => setMode("login")} className="action-btn" style={{ fontSize: 11, padding: "6px 10px" }}>Inloggen</button>
+      <button onClick={() => setMode("register")} className="action-btn" style={{ fontSize: 11, padding: "6px 10px" }}>Registreren</button>
+    </div>
+  );
+};
+
 export default function GearChecklist() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -458,15 +537,176 @@ export default function GearChecklist() {
   const [collapsed, setCollapsed] = useState({});
   const [supplierFilter, setSupplierFilter] = useState(null);
   const [showActions, setShowActions] = useState(false);
+  const [user, setUser] = useState(null);
+  const [syncStatus, setSyncStatus] = useState("local");
+  const [conflictData, setConflictData] = useState(null);
   const saveTimeout = useRef(null);
+  const userRef = useRef(null);
+  const localUpdatedAt = useRef(0);
+  const unsubRemote = useRef(null);
+  const skipNextRemote = useRef(false);
 
-  useEffect(() => { loadData().then(d => { setData(d || { ...DEFAULT_DATA }); setLoading(false); }); }, []);
+  // Keep userRef in sync
+  useEffect(() => { userRef.current = user; }, [user]);
+
+  // ─── Init: load local, then set up auth + remote sync ──────
+  useEffect(() => {
+    let cancelled = false;
+
+    loadLocal().then(d => {
+      if (cancelled) return;
+      const localData = d || { ...DEFAULT_DATA };
+      localUpdatedAt.current = localData.updatedAt || 0;
+      setData(localData);
+      setLoading(false);
+    });
+
+    const unsubAuth = subscribeAuth((u) => {
+      if (cancelled) return;
+      setUser(u);
+
+      // Clean up previous remote subscription
+      if (unsubRemote.current) { unsubRemote.current(); unsubRemote.current = null; }
+
+      if (u) {
+        setSyncStatus("syncing");
+
+        // Sync API key for non-anonymous users
+        if (!u.isAnonymous) {
+          loadSettings(u.uid).then(settings => {
+            if (cancelled) return;
+            if (settings?.apiKey) {
+              const localKey = loadLocalApiKey();
+              if (!localKey) saveLocalApiKey(settings.apiKey);
+            }
+          });
+        }
+
+        let firstSnapshot = true;
+        unsubRemote.current = subscribeRemote(u.uid, (remoteData) => {
+          if (cancelled) return;
+
+          if (skipNextRemote.current) { skipNextRemote.current = false; setSyncStatus("synced"); return; }
+
+          if (!remoteData) {
+            // No remote data — push local data up on first connect
+            if (firstSnapshot) {
+              firstSnapshot = false;
+              loadLocal().then(ld => {
+                if (ld && ld.categories && ld.categories.length > 0) {
+                  saveRemote(u.uid, ld).then(() => setSyncStatus("synced")).catch(() => setSyncStatus("error"));
+                } else {
+                  setSyncStatus("synced");
+                }
+              });
+            }
+            return;
+          }
+
+          const remoteTime = remoteData.updatedAt || 0;
+
+          if (firstSnapshot) {
+            firstSnapshot = false;
+            // Check for conflict: both local and remote have data
+            loadLocal().then(ld => {
+              if (cancelled) return;
+              const hasLocal = ld && ld.categories && ld.categories.length > 0;
+              const localTime = ld?.updatedAt || 0;
+
+              if (hasLocal && localTime > 0 && remoteTime > 0 && localTime !== remoteTime) {
+                // Conflict — let user choose
+                setConflictData({ local: ld, remote: remoteData });
+                setSyncStatus("synced");
+              } else if (remoteTime >= localTime) {
+                // Remote is newer or same — use remote
+                const { updatedAt, ...clean } = remoteData;
+                setData({ ...clean, updatedAt });
+                saveLocal({ ...clean, updatedAt });
+                localUpdatedAt.current = remoteTime;
+                setSyncStatus("synced");
+              } else {
+                setSyncStatus("synced");
+              }
+            });
+            return;
+          }
+
+          // Subsequent snapshots: remote wins if newer
+          if (remoteTime > localUpdatedAt.current) {
+            const { updatedAt, ...clean } = remoteData;
+            setData({ ...clean, updatedAt });
+            saveLocal({ ...clean, updatedAt });
+            localUpdatedAt.current = remoteTime;
+          }
+          setSyncStatus("synced");
+        });
+      } else {
+        setSyncStatus("local");
+      }
+    });
+
+    // Try anonymous sign-in
+    signInAnon().catch(() => setSyncStatus("local"));
+
+    return () => {
+      cancelled = true;
+      unsubAuth();
+      if (unsubRemote.current) unsubRemote.current();
+    };
+  }, []);
 
   const persist = useCallback((nd) => {
-    setData(nd);
+    const stamped = { ...nd, updatedAt: Date.now() };
+    localUpdatedAt.current = stamped.updatedAt;
+    setData(stamped);
     if (saveTimeout.current) clearTimeout(saveTimeout.current);
-    saveTimeout.current = setTimeout(() => saveData(nd), 300);
+    saveTimeout.current = setTimeout(() => {
+      saveLocal(stamped);
+      const u = userRef.current;
+      if (u) {
+        setSyncStatus("syncing");
+        skipNextRemote.current = true;
+        saveRemote(u.uid, stamped).then(() => setSyncStatus("synced")).catch(() => { setSyncStatus("error"); skipNextRemote.current = false; });
+      }
+    }, 300);
   }, []);
+
+  const resolveConflict = (choice) => {
+    const chosen = choice === "local" ? conflictData.local : conflictData.remote;
+    const stamped = { ...chosen, updatedAt: Date.now() };
+    setData(stamped);
+    saveLocal(stamped);
+    localUpdatedAt.current = stamped.updatedAt;
+    if (userRef.current) {
+      skipNextRemote.current = true;
+      saveRemote(userRef.current.uid, stamped).catch(() => {});
+    }
+    setConflictData(null);
+  };
+
+  const handleSignIn = async (email, password) => {
+    if (unsubRemote.current) { unsubRemote.current(); unsubRemote.current = null; }
+    await signInEmail(email, password);
+  };
+
+  const handleRegister = async (email, password) => {
+    if (unsubRemote.current) { unsubRemote.current(); unsubRemote.current = null; }
+    await registerEmail(email, password);
+  };
+
+  const handleLink = async (email, password) => {
+    await linkEmail(email, password);
+    // Sync API key after linking
+    const apiKey = loadLocalApiKey();
+    if (apiKey && userRef.current) {
+      saveSettings(userRef.current.uid, { apiKey });
+    }
+  };
+
+  const handleSignOut = async () => {
+    if (unsubRemote.current) { unsubRemote.current(); unsubRemote.current = null; }
+    await signOut();
+  };
 
   // ─── CRUD ──────────────────────────────────────────────────
   const addCategory = (name) => persist({ ...data, categories: [...data.categories, { id: generateId(), name, itemIds: [], budget: null }] });
@@ -552,11 +792,14 @@ export default function GearChecklist() {
   const importData = () => { const i = document.createElement("input"); i.type="file"; i.accept=".json"; i.onchange=async(e)=>{ const f=e.target.files[0]; if(!f) return; try{const d=JSON.parse(await f.text()); if(d.categories&&d.items) persist(d);}catch{alert("Ongeldig bestand");}}; i.click(); };
   const resetData = () => { if (confirm("Alle data wissen?")) persist({ ...DEFAULT_DATA }); };
   const setApiKey = () => {
-    const current = localStorage.getItem("gear-checklist-api-key") || "";
+    const current = loadLocalApiKey();
     const key = prompt("Anthropic API key (voor AI beschrijvingen).\nLaat leeg om te wissen:", current);
     if (key === null) return;
-    if (key.trim()) localStorage.setItem("gear-checklist-api-key", key.trim());
-    else localStorage.removeItem("gear-checklist-api-key");
+    saveLocalApiKey(key);
+    // Sync to Firestore for non-anonymous users
+    if (user && !user.isAnonymous) {
+      saveSettings(user.uid, { apiKey: key.trim() || null });
+    }
   };
 
   if (loading) return <div style={{ display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:"var(--bg)",color:"var(--text)",fontFamily:"var(--font)" }}>Laden...</div>;
@@ -927,11 +1170,32 @@ export default function GearChecklist() {
         }
       `}</style>
 
+      {/* Conflict Dialog */}
+      {conflictData && (
+        <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16 }}>
+          <div style={{ background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:14,padding:20,maxWidth:360,width:"100%" }}>
+            <h3 style={{ fontSize:16,fontWeight:700,marginBottom:10 }}>Gegevens gevonden</h3>
+            <p style={{ fontSize:13,color:"var(--text-muted)",marginBottom:16,lineHeight:1.5 }}>
+              Er zijn gegevens op dit apparaat en in de cloud. Welke wil je gebruiken?
+            </p>
+            <div style={{ display:"flex",gap:8 }}>
+              <button onClick={() => resolveConflict("local")} style={{ flex:1,background:"var(--bg-input)",border:"1px solid var(--border)",borderRadius:8,color:"var(--text)",padding:"10px 0",fontSize:13,cursor:"pointer",fontFamily:"inherit",fontWeight:600 }}>
+                Lokaal behouden
+              </button>
+              <button onClick={() => resolveConflict("remote")} style={{ flex:1,background:"var(--accent)",border:"none",borderRadius:8,color:"#fff",padding:"10px 0",fontSize:13,cursor:"pointer",fontFamily:"inherit",fontWeight:600 }}>
+                Cloud gebruiken
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div style={{ marginBottom:14, paddingTop: 4 }}>
         <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between" }}>
-          <h1 style={{ fontSize:21,fontWeight:800,letterSpacing:-0.5 }}>
+          <h1 style={{ fontSize:21,fontWeight:800,letterSpacing:-0.5,display:"flex",alignItems:"center",gap:8 }}>
             <span style={{ color:"var(--accent)" }}>⬡</span> Gear Checklist
+            <SyncDot status={syncStatus} />
           </h1>
           <button onClick={() => setShowActions(!showActions)} style={{ background:"none",border:"none",color:"var(--text-muted)",cursor:"pointer",padding:8,minWidth:40,minHeight:40,display:"flex",alignItems:"center",justifyContent:"center" }}>
             <Icon name="more" size={20} />
@@ -949,11 +1213,15 @@ export default function GearChecklist() {
       </div>
 
       {showActions && (
-        <div className="action-row">
-          <button onClick={exportData} className="action-btn"><Icon name="download" size={14} /> Export</button>
-          <button onClick={importData} className="action-btn"><Icon name="upload" size={14} /> Import</button>
-          <button onClick={resetData} className="action-btn danger"><Icon name="reset" size={14} /> Wissen</button>
-          <button onClick={setApiKey} className="action-btn"><Icon name="sparkle" size={14} /> API Key</button>
+        <div style={{ marginBottom: 12 }}>
+          <div className="action-row" style={{ marginBottom: 0 }}>
+            <button onClick={exportData} className="action-btn"><Icon name="download" size={14} /> Export</button>
+            <button onClick={importData} className="action-btn"><Icon name="upload" size={14} /> Import</button>
+            <button onClick={resetData} className="action-btn danger"><Icon name="reset" size={14} /> Wissen</button>
+            <button onClick={setApiKey} className="action-btn"><Icon name="sparkle" size={14} /> API Key</button>
+          </div>
+          <AccountPanel user={user} syncStatus={syncStatus}
+            onSignIn={handleSignIn} onRegister={handleRegister} onLink={handleLink} onSignOut={handleSignOut} />
         </div>
       )}
 
