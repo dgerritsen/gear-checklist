@@ -495,7 +495,7 @@ export default function GearChecklist() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("category");
   const [search, setSearch] = useState("");
-  const [collapsed, setCollapsed] = useState({});
+  const [expanded, setExpanded] = useState({});
   const [supplierFilter, setSupplierFilter] = useState(null);
   const [showActions, setShowActions] = useState(false);
   const [user, setUser] = useState(null);
@@ -817,7 +817,7 @@ export default function GearChecklist() {
   };
   const checkItem = (id) => { const it = data.items[id]; persist({ ...data, items: { ...data.items, [id]: { ...it, checked: !it.checked } } }); };
 
-  const toggle = (id) => setCollapsed(c => ({ ...c, [id]: !c[id] }));
+  const toggle = (id) => setExpanded(c => ({ ...c, [id]: !c[id] }));
 
   // ─── Computed ──────────────────────────────────────────────
   const allSupplierNames = useMemo(() => {
@@ -882,7 +882,7 @@ Alleen JSON, geen andere tekst.`;
     } else {
       prompt = `Je bent een ervaren outdoor/gear adviseur. Stel 3 goede opties voor voor "${item.name}" (categorie: ${cat?.name || "onbekend"}).${noteCtx}
 
-Focus op opties met een goede prijs-kwaliteitverhouding die populair zijn onder kampeerders/hikers. Geef ook aan welke optie je het meest aanbeveelt.
+Focus op opties met een goede prijs-kwaliteitverhouding die populair zijn onder kampeerders/hikers. Geef ook aan welke optie je het meest aanbeveelt. Opties moeten beschikbaar zijn in Nederland, actief worden geproduceerd/verkocht en goed op voorraad zijn.
 
 Antwoord in JSON: { "suggestions": ["naam1", "naam2", "naam3"], "recommendedIndex": <0-based index van de beste>, "reason": "<korte reden in het Nederlands, max 15 woorden>" }
 Alleen JSON, geen andere tekst.`;
@@ -899,7 +899,7 @@ Alleen JSON, geen andere tekst.`;
           "anthropic-dangerous-direct-browser-access": "true",
         },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514", max_tokens: 300,
+          model: "claude-sonnet-4-6", max_tokens: 300,
           messages: [{ role: "user", content: prompt }],
         }),
       });
@@ -996,7 +996,7 @@ Alleen JSON, geen andere tekst.`;
         });
       }).map(cat => {
         const items = (cat.itemIds||[]).map(iid => data.items[iid]).filter(Boolean);
-        const isC = collapsed[cat.id];
+        const isC = !expanded[cat.id];
         return (
           <div key={cat.id} className="card">
             <div className="cat-header" role="button" aria-expanded={!isC} onClick={() => toggle(cat.id)}>
@@ -1018,7 +1018,7 @@ Alleen JSON, geen andere tekst.`;
                   });
                 }).map(item => {
                   const opts = (item.optionIds||[]).map(oid => data.options[oid]).filter(Boolean);
-                  const isIC = collapsed[item.id];
+                  const isIC = !expanded[item.id];
                   return (
                     <div key={item.id} className="item-card">
                       <div className="item-header">
@@ -1053,7 +1053,7 @@ Alleen JSON, geen andere tekst.`;
                           {opts.map(opt => {
                             const sups = (opt.supplierIds||[]).map(sid => data.suppliers[sid]).filter(Boolean);
                             const cheapId = cheapestForOption(opt.id);
-                            const isOC = collapsed[opt.id];
+                            const isOC = !expanded[opt.id];
                             return (
                               <div key={opt.id} className="option-card">
                                 <div className="option-header">
