@@ -1074,6 +1074,11 @@ Alleen JSON, geen andere tekst.`;
                                     </span>;
                                   })()}
                                   {!isOC && <span className="hide-mobile meta-count">{sups.length} aanb.</span>}
+                                  <a href={`https://www.google.com/search?q=${encodeURIComponent(opt.name)}`} target="_blank" rel="noopener noreferrer"
+                                    onClick={e => e.stopPropagation()} aria-label="Zoek op Google" title="Zoek op Google"
+                                    style={{ color:"var(--text-muted)", padding:4, display:"flex", alignItems:"center", justifyContent:"center", minWidth:28, minHeight:28, opacity:0.4, flexShrink:0 }}>
+                                    <Icon name="search" size={12} />
+                                  </a>
                                   <DeleteBtn onDelete={() => deleteOption(opt.id)} size={12} />
                                 </div>
                                 {!isOC && (
