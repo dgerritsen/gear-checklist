@@ -408,10 +408,10 @@ const AccountPanel = ({ user, syncStatus, onSignIn, onRegister, onLink, onSignOu
   const [info, setInfo] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  const submit = async (action) => {
+  const submit = async (action, preferCloud = false) => {
     setBusy(true); setError(null); setInfo(null);
     try {
-      await action(email, password);
+      await action(email, password, preferCloud);
       setMode(null); setEmail(""); setPassword("");
     } catch (e) {
       setError(humanizeAuthError(e));
@@ -452,7 +452,7 @@ const AccountPanel = ({ user, syncStatus, onSignIn, onRegister, onLink, onSignOu
           {error && <div style={{ fontSize: 11, color: "var(--danger)", padding: "2px 0" }}>{error}</div>}
           {info && <div style={{ fontSize: 11, color: "var(--success)", padding: "2px 0" }}>{info}</div>}
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => submit(action)} disabled={busy} className="account-btn account-btn-primary" style={{ flex: 1 }}>
+            <button onClick={() => submit(action, mode === "login")} disabled={busy} className="account-btn account-btn-primary" style={{ flex: 1 }}>
               {busy ? <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> : label}
             </button>
             <button onClick={() => { setMode(null); setError(null); setInfo(null); }} className="account-btn account-btn-secondary" style={{ padding: "10px 16px" }}>
@@ -480,6 +480,7 @@ const AccountPanel = ({ user, syncStatus, onSignIn, onRegister, onLink, onSignOu
           <button onClick={onSignOut} className="action-btn" style={{ fontSize: 11, padding: "6px 10px" }}>Uitloggen</button>
         </>) : user && user.isAnonymous ? (<>
           <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Niet gekoppeld</span>
+          <button onClick={() => setMode("login")} className="action-btn" style={{ fontSize: 11, padding: "6px 10px" }}>Inloggen</button>
           <button onClick={() => setMode("link")} className="action-btn" style={{ fontSize: 11, padding: "6px 10px", borderColor: "var(--accent)", color: "var(--accent)" }}>Account koppelen</button>
         </>) : (<>
           <button onClick={() => setMode("login")} className="action-btn" style={{ fontSize: 11, padding: "6px 10px" }}>Inloggen</button>
@@ -594,7 +595,14 @@ export default function GearChecklist() {
             const hasLocal = ld && ld.categories && ld.categories.length > 0;
             const localTime = ld?.updatedAt || 0;
 
-            if (hasLocal && localTime > 0 && remoteTime > 0 && localTime !== remoteTime) {
+            if (preferCloudRef.current) {
+              // User explicitly logged in — cloud wins, ignore local
+              preferCloudRef.current = false;
+              setData(remoteData);
+              saveLocal(remoteData);
+              localUpdatedAt.current = remoteTime;
+              setSyncStatus("synced");
+            } else if (hasLocal && localTime > 0 && remoteTime > 0 && localTime !== remoteTime) {
               // Conflict — let user choose
               setConflictData({ local: ld, remote: remoteData });
               setSyncStatus("synced");
@@ -697,13 +705,17 @@ export default function GearChecklist() {
     setConflictData(null);
   };
 
-  const handleSignIn = async (email, password) => {
+  const preferCloudRef = useRef(false);
+
+  const handleSignIn = async (email, password, preferCloud = false) => {
     signingIn.current = true;
+    preferCloudRef.current = preferCloud;
     if (unsubRemote.current) { unsubRemote.current(); unsubRemote.current = null; }
     try {
       await signInEmail(email, password);
     } catch (e) {
       signingIn.current = false;
+      preferCloudRef.current = false;
       throw e;
     }
   };
